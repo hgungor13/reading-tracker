@@ -37,6 +37,7 @@ app.post('/api/subscribe', async (c) => {
   const body = await c.req.json<{
     subscription: PushSubscription
     label?: string
+    user_id?: number
   }>()
   const sub = body.subscription
   if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) {
@@ -44,14 +45,15 @@ app.post('/api/subscribe', async (c) => {
   }
 
   await c.env.DB.prepare(
-    `INSERT INTO push_subscriptions (endpoint, p256dh, auth, label, created_at)
-     VALUES (?1, ?2, ?3, ?4, unixepoch())
+    `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, label, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, unixepoch())
      ON CONFLICT(endpoint) DO UPDATE SET
-       p256dh = excluded.p256dh,
-       auth   = excluded.auth,
-       label  = excluded.label`,
+       user_id = excluded.user_id,
+       p256dh  = excluded.p256dh,
+       auth    = excluded.auth,
+       label   = excluded.label`,
   )
-    .bind(sub.endpoint, sub.keys.p256dh, sub.keys.auth, body.label ?? null)
+    .bind(sub.endpoint, body.user_id ?? null, sub.keys.p256dh, sub.keys.auth, body.label ?? null)
     .run()
 
   return c.json({ ok: true })

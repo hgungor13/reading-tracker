@@ -64,8 +64,9 @@ export async function getSubscription(): Promise<PushSubscription | null> {
 }
 
 // Ask permission, subscribe with the server VAPID key, and register the
-// subscription with the Worker. `label` just helps identify the device.
-export async function subscribeToPush(label: string): Promise<void> {
+// subscription with the Worker. `label` identifies the device; `userId` ties
+// the subscription to a person so the nightly cron can target non-readers.
+export async function subscribeToPush(label: string, userId?: number): Promise<void> {
   const support = checkPushSupport()
   if (!support.ok) throw new Error(support.reason)
 
@@ -88,7 +89,7 @@ export async function subscribeToPush(label: string): Promise<void> {
   const res = await fetch('/api/subscribe', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ subscription: sub.toJSON(), label }),
+    body: JSON.stringify({ subscription: sub.toJSON(), label, user_id: userId }),
   })
   if (!res.ok) throw new Error('Failed to register subscription with the server.')
 }
