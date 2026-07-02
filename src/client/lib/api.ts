@@ -1,14 +1,32 @@
 // Typed wrappers around the Worker's /api endpoints.
 
+export type PeriodUnit = 'day' | 'week' | 'month'
+
 export type Plan = {
   id: number
   name: string
   group_code: string
   pages_per_day: number
   start_date: string
+  end_date: string | null
+  start_page: number
+  pages_per_period: number
+  page_step: number
+  period_unit: PeriodUnit
+  period_every: number
+  reader_count: number | null
   title: string
   author: string | null
   total_pages: number | null
+}
+
+export type Period = {
+  seq: number
+  due_date: string
+  from_page: number
+  to_page: number
+  page_count: number
+  done_date: string | null
 }
 
 export type Membership = {
@@ -82,6 +100,38 @@ export function markRead(membershipId: number, from_page?: number, to_page?: num
     from_page,
     to_page,
   })
+}
+
+export function setSchedule(
+  groupCode: string,
+  input: {
+    end_date: string
+    start_page?: number
+    pages_per_period: number
+    page_step?: number
+    period_unit: PeriodUnit
+    period_every?: number
+    reader_count?: number
+  },
+) {
+  return post<{ ok: true; members: number; total_periods: number }>(
+    `/api/plans/${encodeURIComponent(groupCode)}/schedule`,
+    input,
+  )
+}
+
+export function clonePlan(groupCode: string, input: { start_date?: string; name?: string } = {}) {
+  return post<{ ok: true; group_code: string; plan_id: number; members: number }>(
+    `/api/plans/${encodeURIComponent(groupCode)}/clone`,
+    input,
+  )
+}
+
+export async function getPeriods(membershipId: number): Promise<Period[]> {
+  const res = await fetch(`/api/memberships/${membershipId}/periods`)
+  const data = (await res.json().catch(() => ({}))) as { periods?: Period[]; error?: string }
+  if (!res.ok) throw new Error(data.error || 'Could not load schedule')
+  return data.periods ?? []
 }
 
 export async function getStatus(groupCode: string): Promise<StatusResponse> {

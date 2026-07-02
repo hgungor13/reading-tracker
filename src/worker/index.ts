@@ -232,8 +232,9 @@ app.post('/api/read', async (c) => {
 app.get('/api/plans/:code/status', async (c) => {
   const code = c.req.param('code').toUpperCase()
   const plan = await c.env.DB.prepare(
-    `SELECT p.id, p.name, p.group_code, p.pages_per_day, p.start_date,
-            b.title, b.author, b.total_pages
+    `SELECT p.id, p.name, p.group_code, p.pages_per_day, p.start_date, p.end_date,
+            p.start_page, p.pages_per_period, p.page_step, p.period_unit, p.period_every,
+            p.reader_count, b.title, b.author, b.total_pages
      FROM reading_plans p JOIN books b ON b.id = p.book_id
      WHERE p.group_code = ?1`,
   )
