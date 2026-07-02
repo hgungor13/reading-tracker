@@ -23,9 +23,15 @@ Everything runs on Cloudflare's free tier; the only paid ceiling is Workers Paid
 
 ## Status
 
-**Milestone 1 — Web Push spike (done).** Proves the hardest part first: a real
-push notification reaching a phone. UI to subscribe a device + send a test push;
-Worker endpoints; nightly cron stub. Reading features come next.
+- **M1 — Web Push spike (done).** Proves the hardest part first: a real push
+  notification reaching a device. Worker endpoints + service worker.
+- **M2 — Reading API (done).** Plans, join (name + code), per-person assigned
+  slices, idempotent daily "read" logs, and a status query.
+- **M3 — App UI (done).** Home → create plan / join → dashboard: share code,
+  "I read today", who-read-today roster, per-person slice editor, enable
+  reminders. Verified end-to-end in the browser.
+- **Next:** switch the nightly cron from push-to-all to only members with no log
+  today; then deploy + confirm push on a phone.
 
 ## Requirements
 
