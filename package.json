@@ -1,0 +1,46 @@
+{
+  "name": "reading-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "release": "npm run db:migrate:remote && npm run deploy",
+    "gen:icons": "node scripts/generate-icons.mjs",
+    "gen:vapid": "node scripts/generate-vapid.mjs",
+    "cf-typegen": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply reading_tracker_db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply reading_tracker_db --remote"
+  },
+  "dependencies": {
+    "@block65/webcrypto-web-push": "^1.0.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "hono": "^4.12.27",
+    "lucide-react": "^1.23.0",
+    "radix-ui": "^1.6.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.42.4",
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "@tailwindcss/vite": "^4.3.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "tailwindcss": "^4.3.2",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.3",
+    "vite-plugin-pwa": "^1.3.0",
+    "workbox-precaching": "^7.4.1",
+    "workbox-window": "^7.4.1",
+    "wrangler": "^4.106.0"
+  }
+}

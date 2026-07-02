@@ -1,0 +1,5 @@
+# Copy to `.dev.vars` and fill in with `npm run gen:vapid` output.
+# `.dev.vars` is git-ignored; this example file is committed for reference.
+VAPID_SUBJECT="mailto:you@example.com"
+VAPID_PUBLIC="<base64url public key>"
+VAPID_PRIVATE="<base64url private key>"

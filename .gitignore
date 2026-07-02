@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dev-dist/
+.wrangler/
+.claude/
+.dev.vars
+*.local
+
+# Vite / editor
+.DS_Store
+*.log
+.vite/
+
+# Generated placeholder icons (regenerate with `npm run gen:icons`)
+public/icons/
