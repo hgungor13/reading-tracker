@@ -225,6 +225,23 @@ app.post('/api/read', async (c) => {
       .bind(membership_id, to_page)
       .run()
   }
+
+  // Complete the earliest still-pending period that is due — at most one per
+  // day, so re-marking or a busy day doesn't skip ahead through the schedule.
+  await c.env.DB.prepare(
+    `UPDATE reading_periods SET done_date = ?2
+     WHERE id = (
+       SELECT id FROM reading_periods
+       WHERE membership_id = ?1 AND due_date <= ?2 AND done_date IS NULL
+       ORDER BY due_date LIMIT 1
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM reading_periods WHERE membership_id = ?1 AND done_date = ?2
+     )`,
+  )
+    .bind(membership_id, date)
+    .run()
+
   return c.json({ ok: true, log_date: date })
 })
 
@@ -506,85 +523,145 @@ app.post('/api/plans/:code/clone', async (c) => {
   return c.json({ ok: true, group_code: created.group_code, plan_id: created.id, members: members.length, total_periods: total })
 })
 
+// Manually fire the nightly reminder job (testing / admin "nudge now").
+app.post('/api/run-reminders', async (c) => c.json(await runDailyReminders(c.env)))
+
 // Safety net: if the Worker is ever hit for a non-API path, serve the SPA.
 app.all('*', (c) => c.env.ASSETS.fetch(c.req.raw))
 
 // ---- Push helper ----------------------------------------------------------
 
-async function pushToAll(
-  env: Env,
-  payload: { title: string; body: string; url?: string; tag?: string },
-): Promise<{ sent: number; failed: number }> {
-  const vapid: VapidKeys = {
-    subject: env.VAPID_SUBJECT,
-    publicKey: env.VAPID_PUBLIC,
-    privateKey: env.VAPID_PRIVATE,
-  }
+type PushPayload = { title: string; body: string; url?: string; tag?: string }
 
+function vapidFrom(env: Env): VapidKeys {
+  return { subject: env.VAPID_SUBJECT, publicKey: env.VAPID_PUBLIC, privateKey: env.VAPID_PRIVATE }
+}
+
+// Deliver one notification. 'stale' = the subscription is gone (404/410).
+async function deliver(
+  vapid: VapidKeys,
+  sub: { endpoint: string; p256dh: string; auth: string },
+  payload: PushPayload,
+): Promise<'sent' | 'stale' | 'failed'> {
+  const subscription: PushSubscription = {
+    endpoint: sub.endpoint,
+    expirationTime: null,
+    keys: { p256dh: sub.p256dh, auth: sub.auth },
+  }
+  const message: PushMessage = { data: payload, options: { ttl: 60, urgency: 'normal' } }
+  try {
+    const { headers, body } = await buildPushPayload(message, subscription, vapid)
+    const { 'content-length': _cl, ...sendHeaders } = headers
+    const res = await fetch(sub.endpoint, {
+      method: 'POST',
+      headers: sendHeaders,
+      body: body as BodyInit,
+    })
+    if (res.status === 404 || res.status === 410) return 'stale'
+    return res.ok ? 'sent' : 'failed'
+  } catch {
+    return 'failed'
+  }
+}
+
+async function pruneSubscriptions(env: Env, endpoints: string[]): Promise<void> {
+  if (!endpoints.length) return
+  const placeholders = endpoints.map((_, i) => `?${i + 1}`).join(',')
+  await env.DB.prepare(`DELETE FROM push_subscriptions WHERE endpoint IN (${placeholders})`)
+    .bind(...endpoints)
+    .run()
+}
+
+async function pushToAll(env: Env, payload: PushPayload): Promise<{ sent: number; failed: number }> {
+  const vapid = vapidFrom(env)
   const { results } = await env.DB.prepare(
     'SELECT endpoint, p256dh, auth FROM push_subscriptions',
   ).all<StoredSub>()
 
-  const message: PushMessage = { data: payload, options: { ttl: 60, urgency: 'normal' } }
-
   let sent = 0
   let failed = 0
-  const staleEndpoints: string[] = []
-
+  const stale: string[] = []
   await Promise.all(
     results.map(async (row) => {
-      const subscription: PushSubscription = {
-        endpoint: row.endpoint,
-        expirationTime: null,
-        keys: { p256dh: row.p256dh, auth: row.auth },
-      }
-      try {
-        const { headers, body } = await buildPushPayload(message, subscription, vapid)
-        // Let fetch compute content-length itself.
-        const { 'content-length': _cl, ...sendHeaders } = headers
-        const res = await fetch(row.endpoint, {
-          method: 'POST',
-          headers: sendHeaders,
-          body: body as BodyInit,
-        })
-        if (res.status === 404 || res.status === 410) {
-          staleEndpoints.push(row.endpoint) // subscription gone — prune it
-          failed++
-        } else if (res.ok) {
-          sent++
-        } else {
-          failed++
-        }
-      } catch {
+      const r = await deliver(vapid, row, payload)
+      if (r === 'stale') {
+        stale.push(row.endpoint)
         failed++
-      }
+      } else if (r === 'sent') sent++
+      else failed++
     }),
   )
-
-  if (staleEndpoints.length) {
-    const placeholders = staleEndpoints.map((_, i) => `?${i + 1}`).join(',')
-    await env.DB.prepare(
-      `DELETE FROM push_subscriptions WHERE endpoint IN (${placeholders})`,
-    )
-      .bind(...staleEndpoints)
-      .run()
-  }
-
+  await pruneSubscriptions(env, stale)
   return { sent, failed }
 }
 
-// ---- Cron: nightly "who didn't read today?" -------------------------------
+// ---- Cron: nightly reminder to whoever is behind --------------------------
 
-async function runDailyReminders(env: Env): Promise<void> {
-  // TODO (next milestone): join memberships against today's reading_logs,
-  // find users with no log, and push only to those users' subscriptions.
-  // For now the spike just proves the scheduled trigger fires and can push.
-  await pushToAll(env, {
-    title: env.APP_NAME ?? 'Reading Tracker',
-    body: "Daily reminder: don't forget to read today 📖",
-    url: '/',
-    tag: 'daily-reminder',
-  })
+type BehindRow = {
+  endpoint: string
+  p256dh: string
+  auth: string
+  book: string
+  period_count: number
+  due_from: number | null
+  due_to: number | null
+  read_today: number | null
+}
+
+// Push only to members who are behind, and only to user-linked subscriptions.
+// "Behind" = has a due period not marked done (schedule set), or no reading log
+// today (no schedule). Returns counts for observability.
+async function runDailyReminders(env: Env): Promise<{ sent: number; skipped: number }> {
+  const vapid = vapidFrom(env)
+  const today = localDate()
+
+  const { results } = await env.DB.prepare(
+    `SELECT ps.endpoint, ps.p256dh, ps.auth, b.title AS book,
+            (SELECT COUNT(*) FROM reading_periods rp WHERE rp.membership_id = m.id) AS period_count,
+            (SELECT rp.from_page FROM reading_periods rp
+               WHERE rp.membership_id = m.id AND rp.due_date <= ?1 AND rp.done_date IS NULL
+               ORDER BY rp.due_date LIMIT 1) AS due_from,
+            (SELECT rp.to_page FROM reading_periods rp
+               WHERE rp.membership_id = m.id AND rp.due_date <= ?1 AND rp.done_date IS NULL
+               ORDER BY rp.due_date LIMIT 1) AS due_to,
+            (SELECT 1 FROM reading_logs rl WHERE rl.membership_id = m.id AND rl.log_date = ?1) AS read_today
+     FROM memberships m
+     JOIN reading_plans p ON p.id = m.plan_id AND p.active = 1
+     JOIN users u ON u.id = m.user_id
+     JOIN books b ON b.id = p.book_id
+     JOIN push_subscriptions ps ON ps.user_id = m.user_id`,
+  )
+    .bind(today)
+    .all<BehindRow>()
+
+  let sent = 0
+  let skipped = 0
+  const stale: string[] = []
+
+  await Promise.all(
+    results.map(async (r) => {
+      const behind = r.period_count > 0 ? r.due_from != null : r.read_today == null
+      if (!behind) {
+        skipped++
+        return
+      }
+      const body =
+        r.due_from != null
+          ? `${r.book}: time to read pages ${r.due_from}–${r.due_to} 📖`
+          : `Don't forget to read ${r.book} today 📖`
+
+      const res = await deliver(vapid, r, {
+        title: env.APP_NAME ?? 'Reading Tracker',
+        body,
+        url: '/',
+        tag: 'daily-reminder',
+      })
+      if (res === 'stale') stale.push(r.endpoint)
+      else if (res === 'sent') sent++
+    }),
+  )
+  await pruneSubscriptions(env, stale)
+  return { sent, skipped }
 }
 
 export default {
