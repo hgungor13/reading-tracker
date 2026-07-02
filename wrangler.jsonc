@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "reading-tracker",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2025-06-15",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Static PWA build output is served as assets. API routes hit the Worker
+  // first; everything else serves a static file, falling back to index.html
+  // (single-page app) so client-side routes resolve.
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Nightly cron: "who didn't read today?" -> push. 18:00 UTC (21:00 Istanbul).
+  "triggers": {
+    "crons": ["0 18 * * *"]
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "reading_tracker_db",
+      "database_id": "030d158a-70c6-48ca-bc91-5d1d2bf3c166",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "observability": { "enabled": true },
+
+  // Non-secret config. VAPID_PUBLIC/PRIVATE and subject live in .dev.vars
+  // (local) and `wrangler secret put` (prod) — see README.
+  "vars": {
+    "APP_NAME": "Reading Tracker"
+  }
+}
