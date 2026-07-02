@@ -28,10 +28,12 @@ function currentSeq(periods: Period[]): number | null {
 export function ScheduleCard({
   plan,
   membershipId,
+  refresh,
   onChanged,
 }: {
   plan: Plan
   membershipId: number
+  refresh?: number
   onChanged: () => void
 }) {
   const [periods, setPeriods] = useState<Period[] | null>(null)
@@ -43,7 +45,7 @@ export function ScheduleCard({
 
   useEffect(() => {
     void loadPeriods()
-  }, [loadPeriods, plan.end_date, plan.page_step, plan.pages_per_period, plan.period_unit])
+  }, [loadPeriods, plan.end_date, plan.page_step, plan.pages_per_period, plan.period_unit, refresh])
 
   const hasSchedule = !!plan.end_date && !!periods?.length
   const curSeq = periods ? currentSeq(periods) : null

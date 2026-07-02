@@ -12,10 +12,12 @@ import type { Session } from '@/lib/session'
 export function Dashboard({ session, onLeave }: { session: Session; onLeave: () => void }) {
   const [status, setStatus] = useState<StatusResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [version, setVersion] = useState(0)
 
   const load = useCallback(async () => {
     try {
       setStatus(await getStatus(session.groupCode))
+      setVersion((v) => v + 1)
     } catch (e) {
       setError((e as Error).message)
     }
@@ -48,6 +50,7 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
           <ScheduleCard
             plan={status.plan}
             membershipId={session.membershipId}
+            refresh={version}
             onChanged={load}
           />
         </>
