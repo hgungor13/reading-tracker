@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Layout } from '@/components/Layout'
+import { ScheduleCard } from '@/components/ScheduleCard'
 import { assignSlice, getStatus, markRead, type StatusResponse, type StatusMember } from '@/lib/api'
 import { checkPushSupport, getSubscription, subscribeToPush } from '@/lib/push'
 import type { Session } from '@/lib/session'
@@ -44,6 +45,11 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
           {me && <TodayCard me={me} session={session} onChanged={load} />}
           <MembersCard members={status.members} meId={session.membershipId} />
           {me && <SliceCard me={me} onChanged={load} />}
+          <ScheduleCard
+            plan={status.plan}
+            membershipId={session.membershipId}
+            onChanged={load}
+          />
         </>
       )}
     </Layout>
