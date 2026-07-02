@@ -259,6 +259,252 @@ app.get('/api/plans/:code/status', async (c) => {
   return c.json({ plan, date, members: results })
 })
 
+// ---- Schedule generation (Milestone 4) ------------------------------------
+
+type PeriodUnit = 'day' | 'week' | 'month'
+type PeriodRow = { seq: number; due_date: string; from_page: number; to_page: number; page_count: number }
+
+// Calendar-accurate date stepping (weekly = same weekday; monthly = same
+// day-of-month next month, clamped for short months). All UTC, deterministic.
+function addInterval(startISO: string, unit: PeriodUnit, every: number, steps: number): string {
+  const [y, m, d] = startISO.split('-').map(Number)
+  if (unit === 'month') {
+    const totalMonths = m - 1 + every * steps
+    const ny = y + Math.floor(totalMonths / 12)
+    const nm = (((totalMonths % 12) + 12) % 12) + 1
+    const lastDay = new Date(Date.UTC(ny, nm, 0)).getUTCDate()
+    const nd = Math.min(d, lastDay)
+    return `${ny}-${String(nm).padStart(2, '0')}-${String(nd).padStart(2, '0')}`
+  }
+  const days = (unit === 'week' ? 7 : 1) * every * steps
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dt.toISOString().slice(0, 10)
+}
+
+function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number)
+  const [by, bm, bd] = b.split('-').map(Number)
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000)
+}
+
+// The core generator: constant read count, start page strides by pageStep.
+function generatePeriods(opts: {
+  startDate: string
+  endDate: string
+  startPage: number
+  pagesPerPeriod: number
+  pageStep: number
+  unit: PeriodUnit
+  every: number
+}): PeriodRow[] {
+  const step = opts.pageStep > 0 ? opts.pageStep : opts.pagesPerPeriod
+  const rows: PeriodRow[] = []
+  for (let i = 0; i < 5000; i++) {
+    const due = addInterval(opts.startDate, opts.unit, opts.every, i)
+    if (due > opts.endDate) break
+    const from = opts.startPage + i * step
+    rows.push({
+      seq: i + 1,
+      due_date: due,
+      from_page: from,
+      to_page: from + opts.pagesPerPeriod - 1,
+      page_count: opts.pagesPerPeriod,
+    })
+  }
+  return rows
+}
+
+type PlanRow = {
+  id: number
+  group_code: string
+  book_id: number
+  name: string
+  start_date: string
+  end_date: string | null
+  start_page: number
+  pages_per_period: number
+  page_step: number
+  period_unit: PeriodUnit
+  period_every: number
+  reader_count: number | null
+}
+
+function planByCode(env: Env, code: string) {
+  return env.DB.prepare(`SELECT * FROM reading_plans WHERE group_code = ?1`)
+    .bind(code.toUpperCase())
+    .first<PlanRow>()
+}
+
+// Regenerate a single member's periods from their own start page.
+async function regenerateForMember(
+  env: Env,
+  plan: PlanRow,
+  member: { id: number; assigned_from: number | null },
+): Promise<number> {
+  if (!plan.end_date) return 0
+  const rows = generatePeriods({
+    startDate: plan.start_date,
+    endDate: plan.end_date,
+    startPage: member.assigned_from ?? plan.start_page,
+    pagesPerPeriod: plan.pages_per_period,
+    pageStep: plan.page_step,
+    unit: plan.period_unit,
+    every: plan.period_every,
+  })
+  await env.DB.prepare(`DELETE FROM reading_periods WHERE membership_id = ?1`).bind(member.id).run()
+  if (rows.length) {
+    await env.DB.batch(
+      rows.map((r) =>
+        env.DB.prepare(
+          `INSERT INTO reading_periods (membership_id, seq, due_date, from_page, to_page, page_count)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+        ).bind(member.id, r.seq, r.due_date, r.from_page, r.to_page, r.page_count),
+      ),
+    )
+  }
+  return rows.length
+}
+
+// Set the plan's cadence, then regenerate every member's schedule.
+app.post('/api/plans/:code/schedule', async (c) => {
+  const plan = await planByCode(c.env, c.req.param('code'))
+  if (!plan) return c.json({ error: 'Plan not found' }, 404)
+
+  const b = await c.req.json<{
+    end_date: string
+    start_page?: number
+    pages_per_period: number
+    page_step?: number
+    period_unit: PeriodUnit
+    period_every?: number
+    reader_count?: number
+  }>()
+
+  if (!b.end_date || !b.pages_per_period || !b.period_unit) {
+    return c.json({ error: 'end_date, pages_per_period and period_unit are required' }, 400)
+  }
+  if (!['day', 'week', 'month'].includes(b.period_unit)) {
+    return c.json({ error: 'period_unit must be day, week or month' }, 400)
+  }
+  if (b.end_date < plan.start_date) {
+    return c.json({ error: 'end_date must be on or after the start date' }, 400)
+  }
+
+  const startPage = b.start_page ?? plan.start_page
+  await c.env.DB.prepare(
+    `UPDATE reading_plans SET
+       end_date = ?2, start_page = ?3, pages_per_period = ?4, page_step = ?5,
+       period_unit = ?6, period_every = ?7, reader_count = ?8
+     WHERE id = ?1`,
+  )
+    .bind(
+      plan.id,
+      b.end_date,
+      startPage,
+      b.pages_per_period,
+      b.page_step ?? 0,
+      b.period_unit,
+      b.period_every ?? 1,
+      b.reader_count ?? null,
+    )
+    .run()
+
+  const updated = { ...plan, ...b, start_page: startPage, page_step: b.page_step ?? 0 } as PlanRow
+  const { results: members } = await c.env.DB.prepare(
+    `SELECT id, assigned_from FROM memberships WHERE plan_id = ?1`,
+  )
+    .bind(plan.id)
+    .all<{ id: number; assigned_from: number | null }>()
+
+  let total = 0
+  for (const m of members) total += await regenerateForMember(c.env, updated, m)
+
+  return c.json({ ok: true, members: members.length, total_periods: total })
+})
+
+// A member's generated schedule.
+app.get('/api/memberships/:id/periods', async (c) => {
+  const id = Number(c.req.param('id'))
+  const { results } = await c.env.DB.prepare(
+    `SELECT seq, due_date, from_page, to_page, page_count, done_date
+     FROM reading_periods WHERE membership_id = ?1 ORDER BY seq`,
+  )
+    .bind(id)
+    .all()
+  return c.json({ periods: results })
+})
+
+// Clone the plan into the next window: shift dates, continue each reader's
+// pages from where they left off, and regenerate.
+app.post('/api/plans/:code/clone', async (c) => {
+  const plan = await planByCode(c.env, c.req.param('code'))
+  if (!plan) return c.json({ error: 'Plan not found' }, 404)
+  if (!plan.end_date) return c.json({ error: 'Set a schedule before cloning' }, 400)
+
+  const b = await c.req.json<{ start_date?: string; end_date?: string; name?: string }>()
+  const duration = daysBetween(plan.start_date, plan.end_date)
+  const newStart = b.start_date ?? addInterval(plan.end_date, 'day', 1, 1)
+  const newEnd = b.end_date ?? addInterval(newStart, 'day', 1, duration)
+
+  // New plan (same book), fresh code, same cadence.
+  let created: { id: number; group_code: string } | null = null
+  for (let attempt = 0; attempt < 5 && !created; attempt++) {
+    try {
+      created = await c.env.DB.prepare(
+        `INSERT INTO reading_plans
+           (book_id, name, group_code, pages_per_day, start_date, end_date, start_page,
+            pages_per_period, page_step, period_unit, period_every, reader_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         RETURNING id, group_code`,
+      )
+        .bind(
+          plan.book_id,
+          b.name?.trim() || plan.name,
+          newGroupCode(),
+          plan.pages_per_period,
+          newStart,
+          newEnd,
+          plan.start_page,
+          plan.pages_per_period,
+          plan.page_step,
+          plan.period_unit,
+          plan.period_every,
+          plan.reader_count,
+        )
+        .first<{ id: number; group_code: string }>()
+    } catch (e) {
+      if (!String(e).includes('UNIQUE')) throw e
+    }
+  }
+  if (!created) return c.json({ error: 'Could not generate a unique group code' }, 500)
+
+  // Carry each member forward, continuing from their last page read.
+  const { results: members } = await c.env.DB.prepare(
+    `SELECT m.id, m.user_id, m.assigned_from, m.assigned_to,
+            (SELECT MAX(to_page) FROM reading_periods p WHERE p.membership_id = m.id) AS last_page
+     FROM memberships m WHERE m.plan_id = ?1`,
+  )
+    .bind(plan.id)
+    .all<{ id: number; user_id: number; assigned_from: number | null; assigned_to: number | null; last_page: number | null }>()
+
+  const newPlan = { ...plan, id: created.id, group_code: created.group_code, start_date: newStart, end_date: newEnd } as PlanRow
+
+  let total = 0
+  for (const m of members) {
+    const nextStart = m.last_page != null ? m.last_page + 1 : (m.assigned_from ?? plan.start_page)
+    const nm = await c.env.DB.prepare(
+      `INSERT INTO memberships (plan_id, user_id, assigned_from, assigned_to)
+       VALUES (?1, ?2, ?3, ?4) RETURNING id`,
+    )
+      .bind(created.id, m.user_id, nextStart, m.assigned_to)
+      .first<{ id: number }>()
+    total += await regenerateForMember(c.env, newPlan, { id: nm!.id, assigned_from: nextStart })
+  }
+
+  return c.json({ ok: true, group_code: created.group_code, plan_id: created.id, members: members.length, total_periods: total })
+})
+
 // Safety net: if the Worker is ever hit for a non-API path, serve the SPA.
 app.all('*', (c) => c.env.ASSETS.fetch(c.req.raw))
 
