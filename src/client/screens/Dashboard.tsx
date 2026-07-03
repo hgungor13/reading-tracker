@@ -48,6 +48,7 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
           {me && (
             <CalendarCard
               membershipId={session.membershipId}
+              groupCode={session.groupCode}
               today={status.date}
               planStart={status.plan.start_date}
               planEnd={status.plan.end_date}
@@ -71,7 +72,6 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
               hasSlice={me.assigned_from != null}
             />
           )}
-          <MembersCard members={status.members} meId={session.membershipId} />
           <PlanSettingsCard plan={status.plan} onChanged={load} />
         </>
       )}
@@ -162,6 +162,7 @@ function SliceCard({
   const [from, setFrom] = useState(me.assigned_from?.toString() ?? '')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const locked = me.read_days > 0
 
   async function save() {
     const f = from ? Number(from) : undefined
@@ -187,86 +188,57 @@ function SliceCard({
       <CardHeader>
         <CardTitle className="text-base">Initial page slice</CardTitle>
         <CardDescription>
-          Set where you start{totalPages ? ` (1–${totalPages})` : ''}. The end is set automatically
-          by the plan's schedule.
+          {locked
+            ? "Locked — you've started reading, so your starting point is fixed."
+            : `Set where you start${totalPages ? ` (1–${totalPages})` : ''}. The end is set automatically by the plan's schedule.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Labeled label="Start page">
-            <Input
-              inputMode="numeric"
-              placeholder="e.g. 53"
-              value={from}
-              onChange={(e) => setFrom(e.target.value.replace(/\D/g, ''))}
-            />
-          </Labeled>
-          <Labeled label="Ends at (auto)">
-            <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
-              {me.assigned_to ?? '—'}
+        {locked ? (
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Start page</p>
+              <p className="font-medium">{me.assigned_from ?? '—'}</p>
             </div>
-          </Labeled>
-        </div>
-        <Button variant="secondary" onClick={save} disabled={busy} className="w-full">
-          {busy ? 'Saving…' : 'Save slice'}
-        </Button>
-        {msg && (
-          <p
-            className={
-              msg === 'Saved.' ? 'text-sm text-muted-foreground' : 'text-sm text-destructive'
-            }
-          >
-            {msg}
-          </p>
+            <div>
+              <p className="text-xs text-muted-foreground">Ends at</p>
+              <p className="font-medium">{me.assigned_to ?? '—'}</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <Labeled label="Start page">
+                <Input
+                  inputMode="numeric"
+                  placeholder="e.g. 53"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value.replace(/\D/g, ''))}
+                />
+              </Labeled>
+              <Labeled label="Ends at (auto)">
+                <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
+                  {me.assigned_to ?? '—'}
+                </div>
+              </Labeled>
+            </div>
+            <Button variant="secondary" onClick={save} disabled={busy} className="w-full">
+              {busy ? 'Saving…' : 'Save slice'}
+            </Button>
+            {msg && (
+              <p
+                className={
+                  msg === 'Saved.' ? 'text-sm text-muted-foreground' : 'text-sm text-destructive'
+                }
+              >
+                {msg}
+              </p>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
   )
-}
-
-function MembersCard({ members, meId }: { members: StatusMember[]; meId: number }) {
-  const readCount = members.filter((m) => m.read_today === 1).length
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Today's readers</CardTitle>
-        <CardDescription>
-          {readCount} of {members.length} have read today.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col divide-y">
-        {members.map((m) => (
-          <div key={m.membership_id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
-            <span
-              className={
-                m.read_today
-                  ? 'flex size-6 shrink-0 items-center justify-center rounded-full bg-success text-white'
-                  : 'size-6 shrink-0 rounded-full border-2 border-dashed border-muted-foreground/40'
-              }
-            >
-              {m.read_today ? <Check className="size-4" /> : null}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
-                {m.name}
-                {m.membership_id === meId && (
-                  <span className="ml-1.5 text-xs text-muted-foreground">(you)</span>
-                )}
-              </p>
-              <p className="truncate text-xs text-muted-foreground">{sliceLabel(m)}</p>
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-function sliceLabel(m: StatusMember): string {
-  if (m.assigned_from != null || m.assigned_to != null) {
-    return `pages ${m.assigned_from ?? '?'}–${m.assigned_to ?? '?'}`
-  }
-  return 'no slice yet'
 }
 
 function Labeled({ label, children }: { label: string; children: ReactNode }) {

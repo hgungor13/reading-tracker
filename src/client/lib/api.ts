@@ -49,9 +49,22 @@ export type StatusMember = {
   read_today: number
   today_from: number | null
   today_to: number | null
+  read_days: number
 }
 
 export type StatusResponse = { plan: Plan; date: string; members: StatusMember[] }
+
+export type PlanReads = {
+  members: { membership_id: number; name: string }[]
+  reads: { membership_id: number; log_date: string }[]
+}
+
+export async function getPlanReads(groupCode: string): Promise<PlanReads> {
+  const res = await fetch(`/api/plans/${encodeURIComponent(groupCode)}/reads`)
+  const data = (await res.json().catch(() => ({}))) as PlanReads & { error?: string }
+  if (!res.ok) throw new Error(data.error || 'Could not load group calendar')
+  return { members: data.members ?? [], reads: data.reads ?? [] }
+}
 
 async function post<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
