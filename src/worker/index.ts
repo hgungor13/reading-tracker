@@ -176,27 +176,42 @@ app.post('/api/join', async (c) => {
 // Set (or update) a member's assigned slice + pace.
 app.post('/api/memberships/:id/assign', async (c) => {
   const id = Number(c.req.param('id'))
-  const body = await c.req.json<{
-    assigned_from?: number
-    assigned_to?: number
-    pages_per_day?: number
-    slice_note?: string
-  }>()
-  const res = await c.env.DB.prepare(
-    `UPDATE memberships
-       SET assigned_from = ?2, assigned_to = ?3, pages_per_day = ?4, slice_note = ?5
-     WHERE id = ?1`,
+  const body = await c.req.json<{ assigned_from?: number; assigned_to?: number }>()
+
+  const ctx = await c.env.DB.prepare(
+    `SELECT p.group_code, b.total_pages
+     FROM memberships m
+     JOIN reading_plans p ON p.id = m.plan_id
+     JOIN books b ON b.id = p.book_id
+     WHERE m.id = ?1`,
   )
-    .bind(
-      id,
-      body.assigned_from ?? null,
-      body.assigned_to ?? null,
-      body.pages_per_day ?? null,
-      body.slice_note?.trim() ?? null,
-    )
+    .bind(id)
+    .first<{ group_code: string; total_pages: number | null }>()
+  if (!ctx) return c.json({ error: 'Membership not found' }, 404)
+
+  // Slice must stay within the book (plan threshold).
+  const tp = ctx.total_pages
+  for (const v of [body.assigned_from, body.assigned_to]) {
+    if (v != null && (v < 1 || (tp != null && v > tp))) {
+      return c.json({ error: `Pages must be between 1 and ${tp ?? '…'}` }, 400)
+    }
+  }
+  if (body.assigned_from != null && body.assigned_to != null && body.assigned_to < body.assigned_from) {
+    return c.json({ error: 'End page must be ≥ start page' }, 400)
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE memberships SET assigned_from = ?2, assigned_to = ?3 WHERE id = ?1`,
+  )
+    .bind(id, body.assigned_from ?? null, body.assigned_to ?? null)
     .run()
-  if (!res.meta.changes) return c.json({ error: 'Membership not found' }, 404)
-  return c.json({ ok: true })
+
+  // Regenerate this reader's schedule from their new start page.
+  const plan = await planByCode(c.env, ctx.group_code)
+  const periods = plan
+    ? await regenerateForMember(c.env, plan, { id, assigned_from: body.assigned_from ?? null })
+    : 0
+  return c.json({ ok: true, periods })
 })
 
 // "I read today" — idempotent per member per day; advances current_page.
@@ -315,6 +330,7 @@ function generatePeriods(opts: {
   pageStep: number
   unit: PeriodUnit
   every: number
+  maxPage?: number | null
 }): PeriodRow[] {
   const step = opts.pageStep > 0 ? opts.pageStep : opts.pagesPerPeriod
   const rows: PeriodRow[] = []
@@ -322,12 +338,16 @@ function generatePeriods(opts: {
     const due = addInterval(opts.startDate, opts.unit, opts.every, i)
     if (due > opts.endDate) break
     const from = opts.startPage + i * step
+    // Don't schedule past the last page of the book (plan threshold).
+    if (opts.maxPage != null && from > opts.maxPage) break
+    let to = from + opts.pagesPerPeriod - 1
+    if (opts.maxPage != null && to > opts.maxPage) to = opts.maxPage
     rows.push({
       seq: i + 1,
       due_date: due,
       from_page: from,
-      to_page: from + opts.pagesPerPeriod - 1,
-      page_count: opts.pagesPerPeriod,
+      to_page: to,
+      page_count: to - from + 1,
     })
   }
   return rows
@@ -346,10 +366,15 @@ type PlanRow = {
   period_unit: PeriodUnit
   period_every: number
   reader_count: number | null
+  total_pages: number | null
 }
 
 function planByCode(env: Env, code: string) {
-  return env.DB.prepare(`SELECT * FROM reading_plans WHERE group_code = ?1`)
+  return env.DB.prepare(
+    `SELECT p.*, b.total_pages FROM reading_plans p
+     JOIN books b ON b.id = p.book_id
+     WHERE p.group_code = ?1`,
+  )
     .bind(code.toUpperCase())
     .first<PlanRow>()
 }
@@ -364,11 +389,13 @@ async function regenerateForMember(
   const rows = generatePeriods({
     startDate: plan.start_date,
     endDate: plan.end_date,
-    startPage: member.assigned_from ?? plan.start_page,
+    // The reader's start page is their slice; page 1 if they haven't set one.
+    startPage: member.assigned_from ?? 1,
     pagesPerPeriod: plan.pages_per_period,
     pageStep: plan.page_step,
     unit: plan.period_unit,
     every: plan.period_every,
+    maxPage: plan.total_pages,
   })
   await env.DB.prepare(`DELETE FROM reading_periods WHERE membership_id = ?1`).bind(member.id).run()
   if (rows.length) {
@@ -390,8 +417,14 @@ app.post('/api/plans/:code/schedule', async (c) => {
   if (!plan) return c.json({ error: 'Plan not found' }, 404)
 
   const b = await c.req.json<{
+    // Plan / book basics (all optional — this endpoint doubles as "edit plan")
+    title?: string
+    author?: string
+    total_pages?: number
+    name?: string
+    start_date?: string
+    // Schedule cadence (start page is NOT here — it belongs to each slice)
     end_date: string
-    start_page?: number
     pages_per_period: number
     page_step?: number
     period_unit: PeriodUnit
@@ -405,21 +438,36 @@ app.post('/api/plans/:code/schedule', async (c) => {
   if (!['day', 'week', 'month'].includes(b.period_unit)) {
     return c.json({ error: 'period_unit must be day, week or month' }, 400)
   }
-  if (b.end_date < plan.start_date) {
-    return c.json({ error: 'end_date must be on or after the start date' }, 400)
+  const startDate = b.start_date || plan.start_date
+  if (b.end_date < startDate) {
+    return c.json({ error: 'End date must be on or after the start date' }, 400)
   }
 
-  const startPage = b.start_page ?? plan.start_page
+  // Update the book (title/author/total pages) when provided.
+  if (b.title !== undefined || b.author !== undefined || b.total_pages !== undefined) {
+    await c.env.DB.prepare(
+      `UPDATE books SET
+         title = COALESCE(?2, title),
+         author = COALESCE(?3, author),
+         total_pages = COALESCE(?4, total_pages)
+       WHERE id = ?1`,
+    )
+      .bind(plan.book_id, b.title?.trim() || null, b.author?.trim() || null, b.total_pages ?? null)
+      .run()
+  }
+
   await c.env.DB.prepare(
     `UPDATE reading_plans SET
-       end_date = ?2, start_page = ?3, pages_per_period = ?4, page_step = ?5,
-       period_unit = ?6, period_every = ?7, reader_count = ?8
+       name = COALESCE(?2, name), start_date = ?3, end_date = ?4,
+       pages_per_period = ?5, page_step = ?6, period_unit = ?7,
+       period_every = ?8, reader_count = ?9
      WHERE id = ?1`,
   )
     .bind(
       plan.id,
+      b.name?.trim() || null,
+      startDate,
       b.end_date,
-      startPage,
       b.pages_per_period,
       b.page_step ?? 0,
       b.period_unit,
@@ -428,7 +476,8 @@ app.post('/api/plans/:code/schedule', async (c) => {
     )
     .run()
 
-  const updated = { ...plan, ...b, start_page: startPage, page_step: b.page_step ?? 0 } as PlanRow
+  // Re-read the plan (fresh total_pages) and regenerate everyone's schedule.
+  const fresh = (await planByCode(c.env, plan.group_code))!
   const { results: members } = await c.env.DB.prepare(
     `SELECT id, assigned_from FROM memberships WHERE plan_id = ?1`,
   )
@@ -436,7 +485,7 @@ app.post('/api/plans/:code/schedule', async (c) => {
     .all<{ id: number; assigned_from: number | null }>()
 
   let total = 0
-  for (const m of members) total += await regenerateForMember(c.env, updated, m)
+  for (const m of members) total += await regenerateForMember(c.env, fresh, m)
 
   return c.json({ ok: true, members: members.length, total_periods: total })
 })
