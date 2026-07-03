@@ -176,7 +176,8 @@ app.post('/api/join', async (c) => {
 // Set (or update) a member's assigned slice + pace.
 app.post('/api/memberships/:id/assign', async (c) => {
   const id = Number(c.req.param('id'))
-  const body = await c.req.json<{ assigned_from?: number; assigned_to?: number }>()
+  // Only the START is chosen; the END is derived from the plan's schedule.
+  const body = await c.req.json<{ assigned_from?: number }>()
 
   const ctx = await c.env.DB.prepare(
     `SELECT p.group_code, b.total_pages
@@ -189,75 +190,64 @@ app.post('/api/memberships/:id/assign', async (c) => {
     .first<{ group_code: string; total_pages: number | null }>()
   if (!ctx) return c.json({ error: 'Membership not found' }, 404)
 
-  // Slice must stay within the book (plan threshold).
+  // Start must stay within the book (plan threshold).
   const tp = ctx.total_pages
-  for (const v of [body.assigned_from, body.assigned_to]) {
-    if (v != null && (v < 1 || (tp != null && v > tp))) {
-      return c.json({ error: `Pages must be between 1 and ${tp ?? '…'}` }, 400)
-    }
-  }
-  if (body.assigned_from != null && body.assigned_to != null && body.assigned_to < body.assigned_from) {
-    return c.json({ error: 'End page must be ≥ start page' }, 400)
+  const from = body.assigned_from
+  if (from != null && (from < 1 || (tp != null && from > tp))) {
+    return c.json({ error: `Start page must be between 1 and ${tp ?? '…'}` }, 400)
   }
 
-  await c.env.DB.prepare(
-    `UPDATE memberships SET assigned_from = ?2, assigned_to = ?3 WHERE id = ?1`,
-  )
-    .bind(id, body.assigned_from ?? null, body.assigned_to ?? null)
+  await c.env.DB.prepare(`UPDATE memberships SET assigned_from = ?2 WHERE id = ?1`)
+    .bind(id, from ?? null)
     .run()
 
-  // Regenerate this reader's schedule from their new start page.
+  // Regenerate this reader's schedule (this also computes assigned_to = last page).
   const plan = await planByCode(c.env, ctx.group_code)
   const periods = plan
-    ? await regenerateForMember(c.env, plan, { id, assigned_from: body.assigned_from ?? null })
+    ? await regenerateForMember(c.env, plan, { id, assigned_from: from ?? null })
     : 0
-  return c.json({ ok: true, periods })
+
+  const end = await c.env.DB.prepare(`SELECT assigned_to FROM memberships WHERE id = ?1`)
+    .bind(id)
+    .first<{ assigned_to: number | null }>()
+  return c.json({ ok: true, periods, assigned_to: end?.assigned_to ?? null })
 })
 
-// "I read today" — idempotent per member per day; advances current_page.
-app.post('/api/read', async (c) => {
-  const { membership_id, from_page, to_page } = await c.req.json<{
-    membership_id: number
-    from_page?: number
-    to_page?: number
-  }>()
-  if (!membership_id) return c.json({ error: 'membership_id is required' }, 400)
-  const date = localDate()
+// Toggle a reading day (calendar). done=true marks read, done=false unmarks.
+// Recomputes which periods are complete from the log afterwards.
+app.post('/api/memberships/:id/read', async (c) => {
+  const id = Number(c.req.param('id'))
+  const body = await c.req
+    .json<{ date?: string; done?: boolean }>()
+    .catch(() => ({}) as { date?: string; done?: boolean })
+  const date = body.date || localDate()
+  const done = body.done !== false // default true
 
-  await c.env.DB.prepare(
-    `INSERT INTO reading_logs (membership_id, log_date, from_page, to_page)
-     VALUES (?1, ?2, ?3, ?4)
-     ON CONFLICT(membership_id, log_date) DO UPDATE SET
-       from_page = excluded.from_page, to_page = excluded.to_page`,
-  )
-    .bind(membership_id, date, from_page ?? null, to_page ?? null)
-    .run()
-
-  if (to_page) {
+  if (done) {
     await c.env.DB.prepare(
-      `UPDATE memberships SET current_page = ?2 WHERE id = ?1 AND ?2 > current_page`,
+      `INSERT INTO reading_logs (membership_id, log_date) VALUES (?1, ?2)
+       ON CONFLICT(membership_id, log_date) DO NOTHING`,
     )
-      .bind(membership_id, to_page)
+      .bind(id, date)
+      .run()
+  } else {
+    await c.env.DB.prepare(`DELETE FROM reading_logs WHERE membership_id = ?1 AND log_date = ?2`)
+      .bind(id, date)
       .run()
   }
+  await recomputeDone(c.env, id)
+  return c.json({ ok: true, date, read: done })
+})
 
-  // Complete the earliest still-pending period that is due — at most one per
-  // day, so re-marking or a busy day doesn't skip ahead through the schedule.
-  await c.env.DB.prepare(
-    `UPDATE reading_periods SET done_date = ?2
-     WHERE id = (
-       SELECT id FROM reading_periods
-       WHERE membership_id = ?1 AND due_date <= ?2 AND done_date IS NULL
-       ORDER BY due_date LIMIT 1
-     )
-     AND NOT EXISTS (
-       SELECT 1 FROM reading_periods WHERE membership_id = ?1 AND done_date = ?2
-     )`,
+// The reader's read-days, for the calendar.
+app.get('/api/memberships/:id/logs', async (c) => {
+  const id = Number(c.req.param('id'))
+  const { results } = await c.env.DB.prepare(
+    `SELECT log_date FROM reading_logs WHERE membership_id = ?1 ORDER BY log_date`,
   )
-    .bind(membership_id, date)
-    .run()
-
-  return c.json({ ok: true, log_date: date })
+    .bind(id)
+    .all<{ log_date: string }>()
+  return c.json({ dates: results.map((r) => r.log_date) })
 })
 
 // Dashboard data: members, their slices, and who read today.
@@ -408,7 +398,39 @@ async function regenerateForMember(
       ),
     )
   }
+  // The slice end is DERIVED: it's wherever the generated schedule reaches.
+  const endPage = rows.length ? rows[rows.length - 1].to_page : null
+  await env.DB.prepare(`UPDATE memberships SET assigned_to = ?2 WHERE id = ?1`)
+    .bind(member.id, endPage)
+    .run()
+  // Re-align which periods are done against the reading log after regeneration.
+  await recomputeDone(env, member.id)
   return rows.length
+}
+
+// A period is "done" when the reader has that many read-days: the k-th earliest
+// reading log completes the k-th period. Recompute from the log (source of truth)
+// so marking/unmarking any day stays consistent.
+async function recomputeDone(env: Env, membershipId: number): Promise<void> {
+  const { results: logs } = await env.DB.prepare(
+    `SELECT log_date FROM reading_logs WHERE membership_id = ?1 ORDER BY log_date`,
+  )
+    .bind(membershipId)
+    .all<{ log_date: string }>()
+  const { results: periods } = await env.DB.prepare(
+    `SELECT id FROM reading_periods WHERE membership_id = ?1 ORDER BY seq`,
+  )
+    .bind(membershipId)
+    .all<{ id: number }>()
+  if (!periods.length) return
+  await env.DB.batch(
+    periods.map((p, i) =>
+      env.DB.prepare(`UPDATE reading_periods SET done_date = ?2 WHERE id = ?1`).bind(
+        p.id,
+        i < logs.length ? logs[i].log_date : null,
+      ),
+    ),
+  )
 }
 
 // Set the plan's cadence, then regenerate every member's schedule.
