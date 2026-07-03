@@ -269,7 +269,8 @@ app.get('/api/plans/:code/status', async (c) => {
     `SELECT m.id AS membership_id, u.name, m.current_page, m.pages_per_day,
             m.assigned_from, m.assigned_to, m.slice_note,
             CASE WHEN r.id IS NULL THEN 0 ELSE 1 END AS read_today,
-            r.from_page AS today_from, r.to_page AS today_to
+            r.from_page AS today_from, r.to_page AS today_to,
+            (SELECT COUNT(*) FROM reading_logs rl WHERE rl.membership_id = m.id) AS read_days
      FROM memberships m
      JOIN users u ON u.id = m.user_id
      LEFT JOIN reading_logs r ON r.membership_id = m.id AND r.log_date = ?2
@@ -398,8 +399,8 @@ async function regenerateForMember(
       ),
     )
   }
-  // The slice end is DERIVED: it's wherever the generated schedule reaches.
-  const endPage = rows.length ? rows[rows.length - 1].to_page : null
+  // The "initial slice" end is DERIVED from the first period: start + pages read.
+  const endPage = rows.length ? rows[0].to_page : null
   await env.DB.prepare(`UPDATE memberships SET assigned_to = ?2 WHERE id = ?1`)
     .bind(member.id, endPage)
     .run()
@@ -592,6 +593,31 @@ app.post('/api/plans/:code/clone', async (c) => {
   }
 
   return c.json({ ok: true, group_code: created.group_code, plan_id: created.id, members: members.length, total_periods: total })
+})
+
+// Everyone's read-days for the group calendar.
+app.get('/api/plans/:code/reads', async (c) => {
+  const code = c.req.param('code').toUpperCase()
+  const plan = await c.env.DB.prepare(`SELECT id FROM reading_plans WHERE group_code = ?1`)
+    .bind(code)
+    .first<{ id: number }>()
+  if (!plan) return c.json({ error: 'Plan not found' }, 404)
+
+  const { results: members } = await c.env.DB.prepare(
+    `SELECT m.id AS membership_id, u.name
+     FROM memberships m JOIN users u ON u.id = m.user_id
+     WHERE m.plan_id = ?1 ORDER BY u.name`,
+  )
+    .bind(plan.id)
+    .all()
+  const { results: reads } = await c.env.DB.prepare(
+    `SELECT rl.membership_id, rl.log_date
+     FROM reading_logs rl JOIN memberships m ON m.id = rl.membership_id
+     WHERE m.plan_id = ?1`,
+  )
+    .bind(plan.id)
+    .all()
+  return c.json({ members, reads })
 })
 
 // Manually fire the nightly reminder job (testing / admin "nudge now").
