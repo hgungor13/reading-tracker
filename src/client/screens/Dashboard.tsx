@@ -29,6 +29,7 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
   }, [load])
 
   const me = status?.members.find((m) => m.membership_id === session.membershipId)
+  const hasSchedule = !!status?.plan.end_date
 
   return (
     <Layout
@@ -44,8 +45,7 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
-          <PlanCard status={status} />
-          {me && (
+          {me && hasSchedule && (
             <CalendarCard
               membershipId={session.membershipId}
               groupCode={session.groupCode}
@@ -62,7 +62,14 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
               }
             />
           )}
-          {me && <SliceCard me={me} totalPages={status.plan.total_pages} onChanged={load} />}
+          {me && (
+            <SliceCard
+              me={me}
+              totalPages={status.plan.total_pages}
+              pagesPerPeriod={status.plan.pages_per_period}
+              onChanged={load}
+            />
+          )}
           {me && (
             <MyScheduleCard
               plan={status.plan}
@@ -73,39 +80,31 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
             />
           )}
           <PlanSettingsCard plan={status.plan} onChanged={load} />
+          <ShareCodeCard groupCode={status.plan.group_code} />
         </>
       )}
     </Layout>
   )
 }
 
-function PlanCard({ status }: { status: StatusResponse }) {
+function ShareCodeCard({ groupCode }: { groupCode: string }) {
   const [copied, setCopied] = useState(false)
-  const { plan } = status
   async function copy() {
-    await navigator.clipboard?.writeText(plan.group_code)
+    await navigator.clipboard?.writeText(groupCode)
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{plan.title}</CardTitle>
-        <CardDescription>
-          {plan.author ? `${plan.author} · ` : ''}today {status.date}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-3 py-2">
-          <div>
-            <p className="text-xs text-muted-foreground">Share code</p>
-            <p className="font-mono text-lg font-semibold tracking-widest">{plan.group_code}</p>
-          </div>
-          <Button variant="secondary" size="sm" onClick={copy}>
-            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-            {copied ? 'Copied' : 'Copy'}
-          </Button>
+      <CardContent className="flex items-center justify-between gap-3 py-4">
+        <div>
+          <p className="text-xs text-muted-foreground">Share code</p>
+          <p className="font-mono text-lg font-semibold tracking-widest">{groupCode}</p>
         </div>
+        <Button variant="secondary" size="sm" onClick={copy}>
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+          {copied ? 'Copied' : 'Copy'}
+        </Button>
       </CardContent>
     </Card>
   )
@@ -153,16 +152,26 @@ function NotificationsButton({ userId, deviceLabel }: { userId: number; deviceLa
 function SliceCard({
   me,
   totalPages,
+  pagesPerPeriod,
   onChanged,
 }: {
   me: StatusMember
   totalPages: number | null
+  pagesPerPeriod: number
   onChanged: () => void
 }) {
   const [from, setFrom] = useState(me.assigned_from?.toString() ?? '')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const locked = me.read_days > 0
+
+  // Live preview of the slice's first-period end as the user types a start page.
+  // Mirrors the backend: end = min(start + pagesPerPeriod - 1, totalPages). Not stored.
+  const startNum = from ? Number(from) : null
+  const previewEnd =
+    startNum != null && pagesPerPeriod > 0
+      ? Math.min(startNum + pagesPerPeriod - 1, totalPages ?? Number.MAX_SAFE_INTEGER)
+      : (me.assigned_to ?? null)
 
   async function save() {
     const f = from ? Number(from) : undefined
@@ -218,11 +227,11 @@ function SliceCard({
               </Labeled>
               <Labeled label="Ends at (auto)">
                 <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
-                  {me.assigned_to ?? '—'}
+                  {previewEnd ?? '—'}
                 </div>
               </Labeled>
             </div>
-            <Button variant="secondary" onClick={save} disabled={busy} className="w-full">
+            <Button onClick={save} disabled={busy} className="w-full">
               {busy ? 'Saving…' : 'Save slice'}
             </Button>
             {msg && (

@@ -4,15 +4,11 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { getLogs, getPlanReads, toggleReadDay, type PlanReads } from '@/lib/api'
+import { formatTR, TR_MONTHS, TR_WEEKDAYS } from '@/lib/date'
 
 function iso(y: number, mZero: number, d: number) {
   return `${y}-${String(mZero + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
-const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
 
 type Mode = 'mine' | 'everyone'
 
@@ -123,8 +119,8 @@ export function CalendarCard({
             onChange={(e) => setMode(e.target.value as Mode)}
             className="rounded-md border bg-background px-2 py-1 text-sm"
           >
-            <option value="mine">My calendar</option>
-            <option value="everyone">Everyone's calendar</option>
+            <option value="mine">Me</option>
+            <option value="everyone">Everyone</option>
           </select>
         </div>
         <CardDescription>
@@ -139,7 +135,7 @@ export function CalendarCard({
             <ChevronLeft className="size-5" />
           </Button>
           <span className="text-sm font-medium">
-            {MONTHS[cursor.m]} {cursor.y}
+            {TR_MONTHS[cursor.m]} {cursor.y}
           </span>
           <Button variant="ghost" size="icon" onClick={() => shift(1)} disabled={!canNext}>
             <ChevronRight className="size-5" />
@@ -147,7 +143,7 @@ export function CalendarCard({
         </div>
 
         <div className="grid grid-cols-7 gap-1 text-center text-xs text-muted-foreground">
-          {WEEKDAYS.map((w) => (
+          {TR_WEEKDAYS.map((w) => (
             <div key={w}>{w}</div>
           ))}
         </div>
@@ -226,7 +222,7 @@ export function CalendarCard({
         {mode === 'everyone' && group && (
           <div className="rounded-lg border">
             <div className="border-b px-3 py-2 text-sm font-medium">
-              {selected} — {selectedReaders.size} of {total} read
+              {formatTR(selected)} — {selectedReaders.size} of {total} read
             </div>
             <ul className="flex flex-col divide-y">
               {group.members.map((m) => {

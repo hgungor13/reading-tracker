@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { formatTR } from '@/lib/date'
 import {
   clonePlan,
   getPeriods,
@@ -113,7 +114,9 @@ export function MyScheduleCard({
           )}
           {current && (
             <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5">
-              <p className="text-xs font-medium text-primary">This period · due {current.due_date}</p>
+              <p className="text-xs font-medium text-primary">
+                This period · due {formatTR(current.due_date)}
+              </p>
               <p className="text-sm">
                 Read pages{' '}
                 <span className="font-semibold">
@@ -133,7 +136,9 @@ export function MyScheduleCard({
                 )}
               >
                 <span className="w-5 shrink-0 text-xs text-muted-foreground">{p.seq}</span>
-                <span className="w-24 shrink-0 text-xs text-muted-foreground">{p.due_date}</span>
+                <span className="w-24 shrink-0 text-xs text-muted-foreground">
+                  {formatTR(p.due_date)}
+                </span>
                 <span className="flex-1 font-medium">
                   {p.from_page}–{p.to_page}
                 </span>
@@ -189,8 +194,8 @@ export function PlanSettingsCard({ plan, onChanged }: { plan: Plan; onChanged: (
               value={`read ${plan.pages_per_period}, jump ${plan.page_step || plan.pages_per_period}`}
             />
             <Summary label="Every" value={everyLabel(plan.period_unit, plan.period_every)} />
-            <Summary label="Start" value={plan.start_date} />
-            <Summary label="End" value={plan.end_date ?? '—'} />
+            <Summary label="Start" value={formatTR(plan.start_date)} />
+            <Summary label="End" value={formatTR(plan.end_date)} />
           </dl>
 
           <CloneButton groupCode={plan.group_code} />
