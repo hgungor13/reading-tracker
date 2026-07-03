@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { BellRing, Check, Copy, LogOut, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Layout } from '@/components/Layout'
-import { ScheduleCard } from '@/components/ScheduleCard'
-import { assignSlice, getStatus, markRead, type StatusResponse, type StatusMember } from '@/lib/api'
+import { CalendarCard } from '@/components/CalendarCard'
+import { MyScheduleCard, PlanSettingsCard } from '@/components/ScheduleCard'
+import { assignSlice, getStatus, type StatusResponse, type StatusMember } from '@/lib/api'
 import { checkPushSupport, getSubscription, subscribeToPush } from '@/lib/push'
 import type { Session } from '@/lib/session'
 
@@ -44,17 +45,34 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
       ) : (
         <>
           <PlanCard status={status} />
-          {me && <TodayCard me={me} session={session} onChanged={load} />}
           {me && (
-            <SliceCard me={me} totalPages={status.plan.total_pages} onChanged={load} />
+            <CalendarCard
+              membershipId={session.membershipId}
+              today={status.date}
+              planStart={status.plan.start_date}
+              planEnd={status.plan.end_date}
+              refresh={version}
+              onChanged={load}
+              footer={
+                <NotificationsButton
+                  userId={session.userId}
+                  deviceLabel={`${session.userName}'s device`}
+                />
+              }
+            />
           )}
-          <ScheduleCard
-            plan={status.plan}
-            membershipId={session.membershipId}
-            refresh={version}
-            onChanged={load}
-          />
+          {me && <SliceCard me={me} totalPages={status.plan.total_pages} onChanged={load} />}
+          {me && (
+            <MyScheduleCard
+              plan={status.plan}
+              membershipId={session.membershipId}
+              today={status.date}
+              refresh={version}
+              hasSlice={me.assigned_from != null}
+            />
+          )}
           <MembersCard members={status.members} meId={session.membershipId} />
+          <PlanSettingsCard plan={status.plan} onChanged={load} />
         </>
       )}
     </Layout>
@@ -74,8 +92,7 @@ function PlanCard({ status }: { status: StatusResponse }) {
       <CardHeader>
         <CardTitle className="text-base">{plan.title}</CardTitle>
         <CardDescription>
-          {plan.author ? `${plan.author} · ` : ''}
-          {plan.pages_per_day} pages/day · today {status.date}
+          {plan.author ? `${plan.author} · ` : ''}today {status.date}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -89,87 +106,6 @@ function PlanCard({ status }: { status: StatusResponse }) {
             {copied ? 'Copied' : 'Copy'}
           </Button>
         </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function TodayCard({
-  me,
-  session,
-  onChanged,
-}: {
-  me: StatusMember
-  session: Session
-  onChanged: () => void
-}) {
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState<string | null>(null)
-  const read = me.read_today === 1
-
-  async function mark() {
-    setBusy(true)
-    try {
-      await markRead(
-        session.membershipId,
-        from ? Number(from) : undefined,
-        to ? Number(to) : undefined,
-      )
-      setFrom('')
-      setTo('')
-      onChanged()
-    } catch (e) {
-      setMsg((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Card className={read ? 'border-success/40' : undefined}>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          {read ? (
-            <>
-              <span className="flex size-5 items-center justify-center rounded-full bg-success text-white">
-                <Check className="size-3.5" />
-              </span>
-              You've read today
-            </>
-          ) : (
-            "Haven't read today"
-          )}
-        </CardTitle>
-        <CardDescription>
-          {read
-            ? me.today_from || me.today_to
-              ? `Logged pages ${me.today_from ?? '?'}–${me.today_to ?? '?'}.`
-              : 'Marked as read. Tap again to update the pages.'
-            : 'Mark your reading for today. Pages are optional.'}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Input
-            inputMode="numeric"
-            placeholder="from page"
-            value={from}
-            onChange={(e) => setFrom(e.target.value.replace(/\D/g, ''))}
-          />
-          <Input
-            inputMode="numeric"
-            placeholder="to page"
-            value={to}
-            onChange={(e) => setTo(e.target.value.replace(/\D/g, ''))}
-          />
-        </div>
-        <Button onClick={mark} disabled={busy} className="w-full">
-          {busy ? 'Saving…' : read ? 'Update today' : 'I read today'}
-        </Button>
-        <NotificationsButton userId={session.userId} deviceLabel={`${session.userName}'s device`} />
-        {msg && <p className="text-sm text-destructive">{msg}</p>}
       </CardContent>
     </Card>
   )
@@ -211,6 +147,80 @@ function NotificationsButton({ userId, deviceLabel }: { userId: number; deviceLa
       </Button>
       {msg && <p className="text-sm text-destructive">{msg}</p>}
     </>
+  )
+}
+
+function SliceCard({
+  me,
+  totalPages,
+  onChanged,
+}: {
+  me: StatusMember
+  totalPages: number | null
+  onChanged: () => void
+}) {
+  const [from, setFrom] = useState(me.assigned_from?.toString() ?? '')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  async function save() {
+    const f = from ? Number(from) : undefined
+    if (totalPages != null && f && f > totalPages) {
+      setMsg(`Start must be within the book (1–${totalPages}).`)
+      return
+    }
+    setBusy(true)
+    setMsg(null)
+    try {
+      await assignSlice(me.membership_id, { assigned_from: f })
+      setMsg('Saved.')
+      onChanged()
+    } catch (e) {
+      setMsg((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Initial page slice</CardTitle>
+        <CardDescription>
+          Set where you start{totalPages ? ` (1–${totalPages})` : ''}. The end is set automatically
+          by the plan's schedule.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Labeled label="Start page">
+            <Input
+              inputMode="numeric"
+              placeholder="e.g. 53"
+              value={from}
+              onChange={(e) => setFrom(e.target.value.replace(/\D/g, ''))}
+            />
+          </Labeled>
+          <Labeled label="Ends at (auto)">
+            <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
+              {me.assigned_to ?? '—'}
+            </div>
+          </Labeled>
+        </div>
+        <Button variant="secondary" onClick={save} disabled={busy} className="w-full">
+          {busy ? 'Saving…' : 'Save slice'}
+        </Button>
+        {msg && (
+          <p
+            className={
+              msg === 'Saved.' ? 'text-sm text-muted-foreground' : 'text-sm text-destructive'
+            }
+          >
+            {msg}
+          </p>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -259,81 +269,11 @@ function sliceLabel(m: StatusMember): string {
   return 'no slice yet'
 }
 
-function SliceCard({
-  me,
-  totalPages,
-  onChanged,
-}: {
-  me: StatusMember
-  totalPages: number | null
-  onChanged: () => void
-}) {
-  const [from, setFrom] = useState(me.assigned_from?.toString() ?? '')
-  const [to, setTo] = useState(me.assigned_to?.toString() ?? '')
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState<string | null>(null)
-
-  async function save() {
-    const f = from ? Number(from) : undefined
-    const t = to ? Number(to) : undefined
-    if (totalPages != null && ((f && f > totalPages) || (t && t > totalPages))) {
-      setMsg(`Pages must be within the book (1–${totalPages}).`)
-      return
-    }
-    if (f && t && t < f) {
-      setMsg('End page must be ≥ start page.')
-      return
-    }
-    setBusy(true)
-    setMsg(null)
-    try {
-      await assignSlice(me.membership_id, { assigned_from: f, assigned_to: t })
-      setMsg('Saved.')
-      onChanged()
-    } catch (e) {
-      setMsg((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
+function Labeled({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Initial page slice</CardTitle>
-        <CardDescription>
-          The page range you're responsible for{totalPages ? ` (1–${totalPages})` : ''}. Your
-          schedule is generated from its start page.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Input
-            inputMode="numeric"
-            placeholder="from page"
-            value={from}
-            onChange={(e) => setFrom(e.target.value.replace(/\D/g, ''))}
-          />
-          <Input
-            inputMode="numeric"
-            placeholder="to page"
-            value={to}
-            onChange={(e) => setTo(e.target.value.replace(/\D/g, ''))}
-          />
-        </div>
-        <Button variant="secondary" onClick={save} disabled={busy} className="w-full">
-          {busy ? 'Saving…' : 'Save slice'}
-        </Button>
-        {msg && (
-          <p
-            className={
-              msg === 'Saved.' ? 'text-sm text-muted-foreground' : 'text-sm text-destructive'
-            }
-          >
-            {msg}
-          </p>
-        )}
-      </CardContent>
-    </Card>
+    <label className="flex flex-col gap-1.5">
+      <span className="text-sm font-medium">{label}</span>
+      {children}
+    </label>
   )
 }

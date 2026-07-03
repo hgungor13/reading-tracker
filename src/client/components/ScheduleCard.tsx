@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { CalendarClock, Check, Copy, Pencil, CopyPlus } from 'lucide-react'
+import { AlertTriangle, Check, Copy, CopyPlus, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,106 +13,153 @@ import {
   type Plan,
 } from '@/lib/api'
 
-function todayISO() {
-  return new Date().toLocaleDateString('en-CA')
-}
-
-// The period the reader should be on now: latest due on/before today, else the first.
-function currentSeq(periods: Period[]): number | null {
+function currentSeq(periods: Period[], today: string): number | null {
   if (!periods.length) return null
-  const today = todayISO()
   const past = periods.filter((p) => p.due_date <= today)
   return (past.length ? past[past.length - 1] : periods[0]).seq
 }
 
-export function ScheduleCard({
+function everyLabel(unit: PeriodUnit, every: number): string {
+  const u = unit === 'day' ? 'day' : unit === 'week' ? 'week' : 'month'
+  return every > 1 ? `${every} ${u}s` : u
+}
+
+// ---- My schedule (generated output) ---------------------------------------
+
+export function MyScheduleCard({
   plan,
   membershipId,
+  today,
   refresh,
-  onChanged,
+  hasSlice,
 }: {
   plan: Plan
   membershipId: number
+  today: string
   refresh?: number
-  onChanged: () => void
+  hasSlice: boolean
 }) {
   const [periods, setPeriods] = useState<Period[] | null>(null)
-  const [editing, setEditing] = useState(false)
 
   const loadPeriods = useCallback(async () => {
     setPeriods(await getPeriods(membershipId))
   }, [membershipId])
-
   useEffect(() => {
     void loadPeriods()
   }, [loadPeriods, plan.end_date, plan.page_step, plan.pages_per_period, plan.period_unit, refresh])
 
   const hasSchedule = !!plan.end_date && !!periods?.length
-  const curSeq = periods ? currentSeq(periods) : null
+  const curSeq = periods ? currentSeq(periods, today) : null
   const current = periods?.find((p) => p.seq === curSeq) ?? null
+  const title = hasSlice ? 'My schedule' : 'Example schedule'
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <CalendarClock className="size-5" /> Schedule
-        </CardTitle>
+        <CardTitle className="text-base">{title}</CardTitle>
         <CardDescription>
-          {hasSchedule
-            ? `${plan.pages_per_period} pages every ${everyLabel(plan.period_unit, plan.period_every)}`
-            : 'No schedule yet — set the cadence to generate your reading plan.'}
+          {!hasSchedule
+            ? 'No schedule yet — the organizer sets it in Plan settings.'
+            : hasSlice
+              ? `${plan.pages_per_period} pages every ${everyLabel(plan.period_unit, plan.period_every)}`
+              : 'Example from page 1 — set your Initial page slice above for your own schedule.'}
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {editing || !hasSchedule ? (
-          <ScheduleForm
-            plan={plan}
-            onCancel={hasSchedule ? () => setEditing(false) : undefined}
-            onSaved={async () => {
-              setEditing(false)
-              await loadPeriods()
-              onChanged()
-            }}
-          />
+      {hasSchedule && (
+        <CardContent className="flex flex-col gap-4">
+          {current && (
+            <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5">
+              <p className="text-xs font-medium text-primary">This period · due {current.due_date}</p>
+              <p className="text-sm">
+                Read pages{' '}
+                <span className="font-semibold">
+                  {current.from_page}–{current.to_page}
+                </span>{' '}
+                ({current.page_count} pp)
+              </p>
+            </div>
+          )}
+
+          <ol className="flex flex-col divide-y rounded-lg border">
+            {periods!.map((p) => (
+              <li
+                key={p.seq}
+                className={cn(
+                  'flex items-center gap-3 px-3 py-2 text-sm',
+                  p.seq === curSeq && 'bg-primary/5',
+                )}
+              >
+                <span className="w-5 shrink-0 text-xs text-muted-foreground">{p.seq}</span>
+                <span className="w-24 shrink-0 text-xs text-muted-foreground">{p.due_date}</span>
+                <span className="flex-1 font-medium">
+                  {p.from_page}–{p.to_page}
+                </span>
+                {p.done_date && <Check className="size-4 text-success" />}
+              </li>
+            ))}
+          </ol>
+
+          <CloneButton groupCode={plan.group_code} />
+        </CardContent>
+      )}
+    </Card>
+  )
+}
+
+// ---- Plan settings (inputs) with a danger zone ----------------------------
+
+export function PlanSettingsCard({ plan, onChanged }: { plan: Plan; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const notSetUp = !plan.end_date
+
+  return (
+    <Card className={notSetUp ? undefined : 'border-destructive/30'}>
+      <CardHeader>
+        <CardTitle className="text-base">Plan settings</CardTitle>
+        <CardDescription>
+          {notSetUp
+            ? 'Set the book, dates and reading rhythm for the whole group.'
+            : 'The shared rhythm for everyone. Changing it regenerates all schedules.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {notSetUp ? (
+          <ScheduleForm plan={plan} onSaved={onChanged} />
+        ) : editing ? (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+            <p className="mb-3 flex items-center gap-2 text-sm font-medium text-destructive">
+              <AlertTriangle className="size-4" /> This changes everyone's schedule.
+            </p>
+            <ScheduleForm
+              plan={plan}
+              onCancel={() => setEditing(false)}
+              onSaved={() => {
+                setEditing(false)
+                onChanged()
+              }}
+            />
+          </div>
         ) : (
           <>
-            {current && (
-              <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5">
-                <p className="text-xs font-medium text-primary">This period · due {current.due_date}</p>
-                <p className="text-sm">
-                  Read pages{' '}
-                  <span className="font-semibold">
-                    {current.from_page}–{current.to_page}
-                  </span>{' '}
-                  ({current.page_count} pp)
-                </p>
-              </div>
-            )}
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+              <Summary label="Book" value={`${plan.title}${plan.total_pages ? ` · ${plan.total_pages} pp` : ''}`} wide />
+              <Summary
+                label="Rhythm"
+                value={`read ${plan.pages_per_period}, jump ${plan.page_step || plan.pages_per_period}`}
+              />
+              <Summary label="Every" value={everyLabel(plan.period_unit, plan.period_every)} />
+              <Summary label="Start" value={plan.start_date} />
+              <Summary label="End" value={plan.end_date ?? '—'} />
+            </dl>
 
-            <ol className="flex flex-col divide-y rounded-lg border">
-              {periods!.map((p) => (
-                <li
-                  key={p.seq}
-                  className={cn(
-                    'flex items-center gap-3 px-3 py-2 text-sm',
-                    p.seq === curSeq && 'bg-primary/5',
-                  )}
-                >
-                  <span className="w-5 shrink-0 text-xs text-muted-foreground">{p.seq}</span>
-                  <span className="w-24 shrink-0 text-xs text-muted-foreground">{p.due_date}</span>
-                  <span className="flex-1 font-medium">
-                    {p.from_page}–{p.to_page}
-                  </span>
-                  {p.done_date && <Check className="size-4 text-success" />}
-                </li>
-              ))}
-            </ol>
-
-            <div className="flex gap-2">
-              <Button variant="secondary" size="sm" className="flex-1" onClick={() => setEditing(true)}>
-                <Pencil className="size-4" /> Edit schedule
+            <div className="mt-1 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+              <p className="text-xs font-medium text-destructive">Danger zone</p>
+              <p className="mb-2 text-xs text-muted-foreground">
+                Editing regenerates every reader's schedule.
+              </p>
+              <Button variant="destructive" size="sm" onClick={() => setEditing(true)}>
+                <Pencil className="size-4" /> Edit plan settings
               </Button>
-              <CloneButton groupCode={plan.group_code} />
             </div>
           </>
         )}
@@ -120,6 +167,17 @@ export function ScheduleCard({
     </Card>
   )
 }
+
+function Summary({ label, value, wide }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <div className={wide ? 'col-span-2' : undefined}>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="font-medium">{value}</dd>
+    </div>
+  )
+}
+
+// ---- Shared form + clone --------------------------------------------------
 
 function ScheduleForm({
   plan,
@@ -184,7 +242,6 @@ function ScheduleForm({
         </Labeled>
       </div>
 
-      {/* Frequency + "every N" merged into one control */}
       <Labeled label="Repeat every">
         <div className="flex gap-2">
           <Input
@@ -254,7 +311,7 @@ function ScheduleForm({
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Each reader's start page comes from their own slice below. "Start-page jump" blank = read
+        Each reader's start page comes from their own slice. "Start-page jump" blank = read
         contiguous pages.
       </p>
     </div>
@@ -280,8 +337,7 @@ function CloneButton({ groupCode }: { groupCode: string }) {
     return (
       <Button
         variant="outline"
-        size="sm"
-        className="flex-1"
+        className="w-full"
         onClick={async () => {
           await navigator.clipboard?.writeText(newCode)
           setCopied(true)
@@ -289,14 +345,14 @@ function CloneButton({ groupCode }: { groupCode: string }) {
         }}
       >
         {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-        Next: {newCode}
+        Next window created: {newCode}
       </Button>
     )
   }
 
   return (
-    <Button variant="outline" size="sm" className="flex-1" onClick={clone} disabled={busy}>
-      <CopyPlus className="size-4" /> {busy ? 'Cloning…' : 'Clone next'}
+    <Button variant="outline" className="w-full" onClick={clone} disabled={busy}>
+      <CopyPlus className="size-4" /> {busy ? 'Cloning…' : 'Clone for next window'}
     </Button>
   )
 }
@@ -308,9 +364,4 @@ function Labeled({ label, children }: { label: string; children: ReactNode }) {
       {children}
     </label>
   )
-}
-
-function everyLabel(unit: PeriodUnit, every: number): string {
-  const u = unit === 'day' ? 'day' : unit === 'week' ? 'week' : 'month'
-  return every > 1 ? `${every} ${u}s` : u
 }

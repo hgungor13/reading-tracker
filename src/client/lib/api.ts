@@ -82,19 +82,26 @@ export function joinPlan(group_code: string, name: string) {
   )
 }
 
-export function assignSlice(
-  membershipId: number,
-  input: { assigned_from?: number; assigned_to?: number },
-) {
-  return post<{ ok: true; periods: number }>(`/api/memberships/${membershipId}/assign`, input)
+export function assignSlice(membershipId: number, input: { assigned_from?: number }) {
+  return post<{ ok: true; periods: number; assigned_to: number | null }>(
+    `/api/memberships/${membershipId}/assign`,
+    input,
+  )
 }
 
-export function markRead(membershipId: number, from_page?: number, to_page?: number) {
-  return post<{ ok: true; log_date: string }>('/api/read', {
-    membership_id: membershipId,
-    from_page,
-    to_page,
-  })
+// Calendar: mark (done=true) or unmark (done=false) a reading day.
+export function toggleReadDay(membershipId: number, date: string, done: boolean) {
+  return post<{ ok: true; date: string; read: boolean }>(
+    `/api/memberships/${membershipId}/read`,
+    { date, done },
+  )
+}
+
+export async function getLogs(membershipId: number): Promise<string[]> {
+  const res = await fetch(`/api/memberships/${membershipId}/logs`)
+  const data = (await res.json().catch(() => ({}))) as { dates?: string[]; error?: string }
+  if (!res.ok) throw new Error(data.error || 'Could not load reading days')
+  return data.dates ?? []
 }
 
 export function setSchedule(
