@@ -130,26 +130,30 @@ function ScheduleForm({
   onSaved: () => void
   onCancel?: () => void
 }) {
+  const [title, setTitle] = useState(plan.title ?? '')
+  const [totalPages, setTotalPages] = useState(plan.total_pages ? String(plan.total_pages) : '')
+  const [startDate, setStartDate] = useState(plan.start_date ?? '')
   const [endDate, setEndDate] = useState(plan.end_date ?? '')
   const [readCount, setReadCount] = useState(String(plan.pages_per_period || 2))
   const [pageStep, setPageStep] = useState(plan.page_step ? String(plan.page_step) : '')
   const [unit, setUnit] = useState<PeriodUnit>(plan.period_unit ?? 'day')
   const [every, setEvery] = useState(String(plan.period_every || 1))
-  const [startPage, setStartPage] = useState(String(plan.start_page || 1))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function save() {
-    if (!endDate) {
-      setError('Please choose an end date.')
-      return
-    }
+    if (!title.trim()) return setError('Please enter the book title.')
+    if (!startDate) return setError('Please choose a start date.')
+    if (!endDate) return setError('Please choose an end date.')
+    if (endDate < startDate) return setError('End date must be on or after the start date.')
     setBusy(true)
     setError(null)
     try {
       await setSchedule(plan.group_code, {
+        title: title.trim(),
+        total_pages: totalPages ? Number(totalPages) : undefined,
+        start_date: startDate,
         end_date: endDate,
-        start_page: startPage ? Number(startPage) : undefined,
         pages_per_period: Number(readCount) || 1,
         page_step: pageStep ? Number(pageStep) : undefined,
         period_unit: unit,
@@ -162,23 +166,52 @@ function ScheduleForm({
     }
   }
 
+  const unitNoun = unit === 'day' ? 'day' : unit === 'week' ? 'week' : 'month'
+
   return (
     <div className="flex flex-col gap-3">
-      <Labeled label="Frequency">
-        <div className="grid grid-cols-3 gap-2">
-          {(['day', 'week', 'month'] as PeriodUnit[]).map((u) => (
-            <Button
-              key={u}
-              type="button"
-              variant={unit === u ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setUnit(u)}
-            >
-              {u === 'day' ? 'Daily' : u === 'week' ? 'Weekly' : 'Monthly'}
-            </Button>
-          ))}
+      <div className="grid grid-cols-2 gap-3">
+        <Labeled label="Book title">
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Sapiens" />
+        </Labeled>
+        <Labeled label="Total pages">
+          <Input
+            inputMode="numeric"
+            value={totalPages}
+            onChange={(e) => setTotalPages(e.target.value.replace(/\D/g, ''))}
+            placeholder="440"
+          />
+        </Labeled>
+      </div>
+
+      {/* Frequency + "every N" merged into one control */}
+      <Labeled label="Repeat every">
+        <div className="flex gap-2">
+          <Input
+            inputMode="numeric"
+            className="w-16"
+            value={every}
+            onChange={(e) => setEvery(e.target.value.replace(/\D/g, ''))}
+            placeholder="1"
+          />
+          <div className="grid flex-1 grid-cols-3 gap-2">
+            {(['day', 'week', 'month'] as PeriodUnit[]).map((u) => (
+              <Button
+                key={u}
+                type="button"
+                variant={unit === u ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setUnit(u)}
+              >
+                {u === 'day' ? 'Day' : u === 'week' ? 'Week' : 'Month'}
+              </Button>
+            ))}
+          </div>
         </div>
       </Labeled>
+      <p className="-mt-1 text-xs text-muted-foreground">
+        = every {Number(every) > 1 ? `${every} ${unitNoun}s` : unitNoun}.
+      </p>
 
       <div className="grid grid-cols-2 gap-3">
         <Labeled label="Pages to read">
@@ -200,33 +233,19 @@ function ScheduleForm({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Labeled label="Start page">
-          <Input
-            inputMode="numeric"
-            value={startPage}
-            onChange={(e) => setStartPage(e.target.value.replace(/\D/g, ''))}
-            placeholder="1"
-          />
+        <Labeled label="Start date">
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
         </Labeled>
-        <Labeled label={`Every N ${unit}s`}>
-          <Input
-            inputMode="numeric"
-            value={every}
-            onChange={(e) => setEvery(e.target.value.replace(/\D/g, ''))}
-            placeholder="1"
-          />
+        <Labeled label="End date (goal)">
+          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </Labeled>
       </div>
-
-      <Labeled label="End date (goal)">
-        <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-      </Labeled>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="flex gap-2">
         <Button onClick={save} disabled={busy} className="flex-1">
-          {busy ? 'Generating…' : 'Generate schedule'}
+          {busy ? 'Generating…' : 'Save & generate'}
         </Button>
         {onCancel && (
           <Button variant="ghost" onClick={onCancel} disabled={busy}>
@@ -235,8 +254,8 @@ function ScheduleForm({
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Note: your own start page comes from your slice if you set one; this default is used
-        otherwise. "Start-page jump" blank = read contiguous pages.
+        Each reader's start page comes from their own slice below. "Start-page jump" blank = read
+        contiguous pages.
       </p>
     </div>
   )

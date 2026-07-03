@@ -84,14 +84,9 @@ export function joinPlan(group_code: string, name: string) {
 
 export function assignSlice(
   membershipId: number,
-  input: {
-    assigned_from?: number
-    assigned_to?: number
-    pages_per_day?: number
-    slice_note?: string
-  },
+  input: { assigned_from?: number; assigned_to?: number },
 ) {
-  return post<{ ok: true }>(`/api/memberships/${membershipId}/assign`, input)
+  return post<{ ok: true; periods: number }>(`/api/memberships/${membershipId}/assign`, input)
 }
 
 export function markRead(membershipId: number, from_page?: number, to_page?: number) {
@@ -105,8 +100,12 @@ export function markRead(membershipId: number, from_page?: number, to_page?: num
 export function setSchedule(
   groupCode: string,
   input: {
+    title?: string
+    author?: string
+    total_pages?: number
+    name?: string
+    start_date?: string
     end_date: string
-    start_page?: number
     pages_per_period: number
     page_step?: number
     period_unit: PeriodUnit

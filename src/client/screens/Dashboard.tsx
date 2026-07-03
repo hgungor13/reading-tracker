@@ -45,14 +45,16 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
         <>
           <PlanCard status={status} />
           {me && <TodayCard me={me} session={session} onChanged={load} />}
-          <MembersCard members={status.members} meId={session.membershipId} />
-          {me && <SliceCard me={me} onChanged={load} />}
+          {me && (
+            <SliceCard me={me} totalPages={status.plan.total_pages} onChanged={load} />
+          )}
           <ScheduleCard
             plan={status.plan}
             membershipId={session.membershipId}
             refresh={version}
             onChanged={load}
           />
+          <MembersCard members={status.members} meId={session.membershipId} />
         </>
       )}
     </Layout>
@@ -251,29 +253,41 @@ function MembersCard({ members, meId }: { members: StatusMember[]; meId: number 
 }
 
 function sliceLabel(m: StatusMember): string {
-  if (m.slice_note) return m.slice_note
   if (m.assigned_from != null || m.assigned_to != null) {
     return `pages ${m.assigned_from ?? '?'}–${m.assigned_to ?? '?'}`
   }
-  return 'no slice assigned yet'
+  return 'no slice yet'
 }
 
-function SliceCard({ me, onChanged }: { me: StatusMember; onChanged: () => void }) {
+function SliceCard({
+  me,
+  totalPages,
+  onChanged,
+}: {
+  me: StatusMember
+  totalPages: number | null
+  onChanged: () => void
+}) {
   const [from, setFrom] = useState(me.assigned_from?.toString() ?? '')
   const [to, setTo] = useState(me.assigned_to?.toString() ?? '')
-  const [note, setNote] = useState(me.slice_note ?? '')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
   async function save() {
+    const f = from ? Number(from) : undefined
+    const t = to ? Number(to) : undefined
+    if (totalPages != null && ((f && f > totalPages) || (t && t > totalPages))) {
+      setMsg(`Pages must be within the book (1–${totalPages}).`)
+      return
+    }
+    if (f && t && t < f) {
+      setMsg('End page must be ≥ start page.')
+      return
+    }
     setBusy(true)
     setMsg(null)
     try {
-      await assignSlice(me.membership_id, {
-        assigned_from: from ? Number(from) : undefined,
-        assigned_to: to ? Number(to) : undefined,
-        slice_note: note.trim() || undefined,
-      })
+      await assignSlice(me.membership_id, { assigned_from: f, assigned_to: t })
       setMsg('Saved.')
       onChanged()
     } catch (e) {
@@ -286,8 +300,11 @@ function SliceCard({ me, onChanged }: { me: StatusMember; onChanged: () => void 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Your slice</CardTitle>
-        <CardDescription>The page range you're responsible for. Can be loose.</CardDescription>
+        <CardTitle className="text-base">Initial page slice</CardTitle>
+        <CardDescription>
+          The page range you're responsible for{totalPages ? ` (1–${totalPages})` : ''}. Your
+          schedule is generated from its start page.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-3">
@@ -304,11 +321,6 @@ function SliceCard({ me, onChanged }: { me: StatusMember; onChanged: () => void 
             onChange={(e) => setTo(e.target.value.replace(/\D/g, ''))}
           />
         </div>
-        <Input
-          placeholder='note, e.g. "Temmuz: 30-60"'
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-        />
         <Button variant="secondary" onClick={save} disabled={busy} className="w-full">
           {busy ? 'Saving…' : 'Save slice'}
         </Button>
