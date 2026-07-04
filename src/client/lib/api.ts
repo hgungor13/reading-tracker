@@ -45,6 +45,7 @@ export type StatusMember = {
   pages_per_day: number | null
   assigned_from: number | null
   assigned_to: number | null
+  pages_per_period: number | null
   slice_note: string | null
   read_today: number
   today_from: number | null
@@ -95,7 +96,10 @@ export function joinPlan(group_code: string, name: string) {
   )
 }
 
-export function assignSlice(membershipId: number, input: { assigned_from?: number }) {
+export function assignSlice(
+  membershipId: number,
+  input: { assigned_from?: number; pages_per_period?: number },
+) {
   return post<{ ok: true; periods: number; assigned_to: number | null }>(
     `/api/memberships/${membershipId}/assign`,
     input,
@@ -126,7 +130,7 @@ export function setSchedule(
     name?: string
     start_date?: string
     end_date: string
-    pages_per_period: number
+    pages_per_period?: number
     page_step?: number
     period_unit: PeriodUnit
     period_every?: number
