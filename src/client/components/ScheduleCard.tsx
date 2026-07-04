@@ -15,9 +15,8 @@ import {
   type Plan,
 } from '@/lib/api'
 
-// The current period is the next one still unread — matching count-based
-// completion — so it stays consistent for readers who are ahead or behind the
-// plan's calendar. If everything is done, it's the last period.
+// The current period is the earliest one still unread — the oldest scheduled
+// day the reader hasn't marked. If everything is done, it's the last period.
 function currentSeq(periods: Period[]): number | null {
   if (!periods.length) return null
   const pending = periods.find((p) => !p.done_date)
@@ -105,7 +104,7 @@ export function MyScheduleCard({
               >
                 <span className="w-5 shrink-0 text-xs text-muted-foreground">{p.seq}</span>
                 <span className="w-24 shrink-0 text-xs text-muted-foreground">
-                  {formatTR(p.done_date ?? p.due_date)}
+                  {formatTR(p.due_date)}
                 </span>
                 <span className="flex-1 font-medium">
                   {p.from_page}–{p.to_page}

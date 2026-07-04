@@ -465,26 +465,28 @@ async function regenerateForMember(
   return rows.length
 }
 
-// A period is "done" when the reader has that many read-days: the k-th earliest
-// reading log completes the k-th period. Recompute from the log (source of truth)
-// so marking/unmarking any day stays consistent.
+// A period is "done" when the reader logged a read on that period's own due
+// date: marking day D completes the schedule row scheduled for D (date-based),
+// so the calendar and the schedule list stay on the same axis. Recompute from
+// the log (source of truth) so marking/unmarking any day stays consistent.
 async function recomputeDone(env: Env, membershipId: number): Promise<void> {
   const { results: logs } = await env.DB.prepare(
-    `SELECT log_date FROM reading_logs WHERE membership_id = ?1 ORDER BY log_date`,
+    `SELECT log_date FROM reading_logs WHERE membership_id = ?1`,
   )
     .bind(membershipId)
     .all<{ log_date: string }>()
+  const read = new Set(logs.map((l) => l.log_date))
   const { results: periods } = await env.DB.prepare(
-    `SELECT id FROM reading_periods WHERE membership_id = ?1 ORDER BY seq`,
+    `SELECT id, due_date FROM reading_periods WHERE membership_id = ?1 ORDER BY seq`,
   )
     .bind(membershipId)
-    .all<{ id: number }>()
+    .all<{ id: number; due_date: string }>()
   if (!periods.length) return
   await env.DB.batch(
-    periods.map((p, i) =>
+    periods.map((p) =>
       env.DB.prepare(`UPDATE reading_periods SET done_date = ?2 WHERE id = ?1`).bind(
         p.id,
-        i < logs.length ? logs[i].log_date : null,
+        read.has(p.due_date) ? p.due_date : null,
       ),
     ),
   )
