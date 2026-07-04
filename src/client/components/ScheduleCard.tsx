@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { AlertTriangle, Check, ChevronDown, Copy, CopyPlus, Pencil } from 'lucide-react'
+import { AlertTriangle, Check, Copy, CopyPlus, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import { Section } from '@/components/Section'
 import { cn } from '@/lib/utils'
 import { formatTR } from '@/lib/date'
 import {
@@ -25,46 +26,6 @@ function everyLabel(unit: PeriodUnit, every: number): string {
   return every > 1 ? `${every} ${u}s` : u
 }
 
-// A collapsible card (accordion).
-function AccordionCard({
-  title,
-  subtitle,
-  defaultOpen,
-  className,
-  children,
-}: {
-  title: string
-  subtitle?: string
-  defaultOpen?: boolean
-  className?: string
-  children: ReactNode
-}) {
-  const [open, setOpen] = useState(!!defaultOpen)
-  return (
-    <Card className={cn('gap-0 py-0', className)}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-2 px-5 py-4 text-left"
-      >
-        <div className="min-w-0">
-          <div className="text-base font-semibold">{title}</div>
-          {subtitle && !open && (
-            <div className="truncate text-sm text-muted-foreground">{subtitle}</div>
-          )}
-        </div>
-        <ChevronDown
-          className={cn(
-            'size-5 shrink-0 text-muted-foreground transition-transform',
-            open && 'rotate-180',
-          )}
-        />
-      </button>
-      {open && <div className="px-5 pb-5">{children}</div>}
-    </Card>
-  )
-}
-
 // ---- My schedule (generated output) ---------------------------------------
 
 export function MyScheduleCard({
@@ -73,12 +34,14 @@ export function MyScheduleCard({
   today,
   refresh,
   hasSlice,
+  pagesPerPeriod,
 }: {
   plan: Plan
   membershipId: number
   today: string
   refresh?: number
   hasSlice: boolean
+  pagesPerPeriod: number
 }) {
   const [periods, setPeriods] = useState<Period[] | null>(null)
 
@@ -96,24 +59,28 @@ export function MyScheduleCard({
   const subtitle = !hasSchedule
     ? 'Not set up yet'
     : hasSlice
-      ? `${plan.pages_per_period} pages every ${everyLabel(plan.period_unit, plan.period_every)}`
+      ? `${pagesPerPeriod} pages every ${everyLabel(plan.period_unit, plan.period_every)}`
       : 'Example from page 1'
 
   return (
-    <AccordionCard title={title} subtitle={subtitle} defaultOpen>
+    <Section title={title} subtitle={hasSchedule ? subtitle : undefined}>
       {!hasSchedule ? (
-        <p className="text-sm text-muted-foreground">
-          No schedule yet — the organizer sets it in Plan settings.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {!hasSlice && (
+        <Card>
+          <CardContent className="py-4">
             <p className="text-sm text-muted-foreground">
+              No schedule yet — the organizer sets it in Plan settings.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {!hasSlice && (
+            <p className="px-1 text-sm text-muted-foreground">
               Example from page 1 — set your Initial page slice for your own schedule.
             </p>
           )}
           {current && (
-            <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5">
+            <div className="rounded-xl border border-primary/40 bg-primary/5 px-4 py-3">
               <p className="text-xs font-medium text-primary">
                 This period · due {formatTR(current.due_date)}
               </p>
@@ -126,12 +93,12 @@ export function MyScheduleCard({
               </p>
             </div>
           )}
-          <ol className="flex flex-col divide-y rounded-lg border">
+          <ol className="flex flex-col divide-y overflow-hidden rounded-xl border bg-card shadow-sm">
             {periods!.map((p) => (
               <li
                 key={p.seq}
                 className={cn(
-                  'flex items-center gap-3 px-3 py-2 text-sm',
+                  'flex items-center gap-3 px-4 py-3 text-sm',
                   p.seq === curSeq && 'bg-primary/5',
                 )}
               >
@@ -148,7 +115,7 @@ export function MyScheduleCard({
           </ol>
         </div>
       )}
-    </AccordionCard>
+    </Section>
   )
 }
 
@@ -159,59 +126,61 @@ export function PlanSettingsCard({ plan, onChanged }: { plan: Plan; onChanged: (
   const notSetUp = !plan.end_date
 
   return (
-    <AccordionCard
+    <Section
       title="Plan settings"
       subtitle={notSetUp ? 'Set up the schedule' : `${plan.title} · ${everyLabel(plan.period_unit, plan.period_every)}`}
-      defaultOpen={notSetUp}
-      className={notSetUp ? undefined : 'border-destructive/30'}
     >
-      {notSetUp ? (
-        <ScheduleForm plan={plan} onSaved={onChanged} />
-      ) : editing ? (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-          <p className="mb-3 flex items-center gap-2 text-sm font-medium text-destructive">
-            <AlertTriangle className="size-4" /> This changes everyone's schedule.
-          </p>
-          <ScheduleForm
-            plan={plan}
-            onCancel={() => setEditing(false)}
-            onSaved={() => {
-              setEditing(false)
-              onChanged()
-            }}
-          />
-        </div>
-      ) : (
-        <div className="flex flex-col gap-4">
-          <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
-            <Summary
-              label="Book"
-              value={`${plan.title}${plan.total_pages ? ` · ${plan.total_pages} pp` : ''}`}
-              wide
-            />
-            <Summary
-              label="Rhythm"
-              value={`read ${plan.pages_per_period}, jump ${plan.page_step || plan.pages_per_period}`}
-            />
-            <Summary label="Every" value={everyLabel(plan.period_unit, plan.period_every)} />
-            <Summary label="Start" value={formatTR(plan.start_date)} />
-            <Summary label="End" value={formatTR(plan.end_date)} />
-          </dl>
+      <Card className={notSetUp ? undefined : 'border-destructive/30'}>
+        <CardContent>
+          {notSetUp ? (
+            <ScheduleForm plan={plan} onSaved={onChanged} />
+          ) : editing ? (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+              <p className="mb-3 flex items-center gap-2 text-sm font-medium text-destructive">
+                <AlertTriangle className="size-4" /> This changes everyone's schedule.
+              </p>
+              <ScheduleForm
+                plan={plan}
+                onCancel={() => setEditing(false)}
+                onSaved={() => {
+                  setEditing(false)
+                  onChanged()
+                }}
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                <Summary
+                  label="Book"
+                  value={`${plan.title}${plan.total_pages ? ` · ${plan.total_pages} pp` : ''}`}
+                  wide
+                />
+                <Summary
+                  label="Start-page jump"
+                  value={plan.page_step ? `${plan.page_step} pages (shared)` : 'contiguous'}
+                />
+                <Summary label="Every" value={everyLabel(plan.period_unit, plan.period_every)} />
+                <Summary label="Start" value={formatTR(plan.start_date)} />
+                <Summary label="End" value={formatTR(plan.end_date)} />
+              </dl>
 
-          <CloneButton groupCode={plan.group_code} />
+              <CloneButton groupCode={plan.group_code} />
 
-          <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-            <p className="text-xs font-medium text-destructive">Danger zone</p>
-            <p className="mb-2 text-xs text-muted-foreground">
-              Editing regenerates every reader's schedule.
-            </p>
-            <Button variant="destructive" size="sm" onClick={() => setEditing(true)}>
-              <Pencil className="size-4" /> Edit plan settings
-            </Button>
-          </div>
-        </div>
-      )}
-    </AccordionCard>
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                <p className="text-xs font-medium text-destructive">Danger zone</p>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Editing regenerates every reader's schedule.
+                </p>
+                <Button variant="destructive" size="sm" onClick={() => setEditing(true)}>
+                  <Pencil className="size-4" /> Edit plan settings
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </Section>
   )
 }
 
@@ -239,7 +208,6 @@ function ScheduleForm({
   const [totalPages, setTotalPages] = useState(plan.total_pages ? String(plan.total_pages) : '')
   const [startDate, setStartDate] = useState(plan.start_date ?? '')
   const [endDate, setEndDate] = useState(plan.end_date ?? '')
-  const [readCount, setReadCount] = useState(String(plan.pages_per_period || 2))
   const [pageStep, setPageStep] = useState(plan.page_step ? String(plan.page_step) : '')
   const [unit, setUnit] = useState<PeriodUnit>(plan.period_unit ?? 'day')
   const [every, setEvery] = useState(String(plan.period_every || 1))
@@ -259,7 +227,6 @@ function ScheduleForm({
         total_pages: totalPages ? Number(totalPages) : undefined,
         start_date: startDate,
         end_date: endDate,
-        pages_per_period: Number(readCount) || 1,
         page_step: pageStep ? Number(pageStep) : undefined,
         period_unit: unit,
         period_every: every ? Number(every) : 1,
@@ -317,24 +284,14 @@ function ScheduleForm({
         = every {Number(every) > 1 ? `${every} ${unitNoun}s` : unitNoun}.
       </p>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Labeled label="Pages to read">
-          <Input
-            inputMode="numeric"
-            value={readCount}
-            onChange={(e) => setReadCount(e.target.value.replace(/\D/g, ''))}
-            placeholder="2"
-          />
-        </Labeled>
-        <Labeled label="Start-page jump">
-          <Input
-            inputMode="numeric"
-            value={pageStep}
-            onChange={(e) => setPageStep(e.target.value.replace(/\D/g, ''))}
-            placeholder="= pages read"
-          />
-        </Labeled>
-      </div>
+      <Labeled label="Start-page jump (shared)">
+        <Input
+          inputMode="numeric"
+          value={pageStep}
+          onChange={(e) => setPageStep(e.target.value.replace(/\D/g, ''))}
+          placeholder="= pages read"
+        />
+      </Labeled>
 
       <div className="grid grid-cols-2 gap-3">
         <Labeled label="Start date">
@@ -358,8 +315,8 @@ function ScheduleForm({
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Each reader's start page comes from their own slice. "Start-page jump" blank = read
-        contiguous pages.
+        Each reader sets their own start page and pages-to-read in their slice. The start-page
+        jump is shared by everyone; blank = read contiguous pages.
       </p>
     </div>
   )

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { BellRing, Check, Copy, LogOut, Smartphone } from 'lucide-react'
+import { BellRing, Check, Copy, LogOut, Settings, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import { Section } from '@/components/Section'
 import { Layout } from '@/components/Layout'
 import { CalendarCard } from '@/components/CalendarCard'
 import { MyScheduleCard, PlanSettingsCard } from '@/components/ScheduleCard'
@@ -14,6 +15,7 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
   const [status, setStatus] = useState<StatusResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [version, setVersion] = useState(0)
+  const [showSettings, setShowSettings] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -30,14 +32,31 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
 
   const me = status?.members.find((m) => m.membership_id === session.membershipId)
   const hasSchedule = !!status?.plan.end_date
+  // Plan settings stays tucked behind the gear so the focus is slice + schedule.
+  // It opens automatically while there's no schedule yet (setup is required).
+  const notSetUp = !!status && !status.plan.end_date
+  const settingsOpen = showSettings || notSetUp
 
   return (
     <Layout
       subtitle={session.planName}
       right={
-        <Button variant="ghost" size="icon" onClick={onLeave} aria-label="Leave group">
-          <LogOut className="size-5" />
-        </Button>
+        <div className="flex items-center gap-0.5">
+          {status && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowSettings((s) => !s)}
+              aria-label="Plan settings"
+              aria-pressed={settingsOpen}
+            >
+              <Settings className={`size-5 ${settingsOpen ? 'text-primary' : ''}`} />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" onClick={onLeave} aria-label="Leave group">
+            <LogOut className="size-5" />
+          </Button>
+        </div>
       }
     >
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -45,6 +64,7 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
+          {settingsOpen && <PlanSettingsCard plan={status.plan} onChanged={load} />}
           {me && hasSchedule && (
             <CalendarCard
               membershipId={session.membershipId}
@@ -52,6 +72,7 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
               today={status.date}
               planStart={status.plan.start_date}
               planEnd={status.plan.end_date}
+              hasSlice={me.assigned_from != null}
               refresh={version}
               onChanged={load}
               footer={
@@ -66,7 +87,7 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
             <SliceCard
               me={me}
               totalPages={status.plan.total_pages}
-              pagesPerPeriod={status.plan.pages_per_period}
+              planReadCount={status.plan.pages_per_period}
               onChanged={load}
             />
           )}
@@ -77,9 +98,9 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
               today={status.date}
               refresh={version}
               hasSlice={me.assigned_from != null}
+              pagesPerPeriod={me.pages_per_period ?? status.plan.pages_per_period}
             />
           )}
-          <PlanSettingsCard plan={status.plan} onChanged={load} />
           <ShareCodeCard groupCode={status.plan.group_code} />
         </>
       )}
@@ -95,18 +116,17 @@ function ShareCodeCard({ groupCode }: { groupCode: string }) {
     setTimeout(() => setCopied(false), 1500)
   }
   return (
-    <Card>
-      <CardContent className="flex items-center justify-between gap-3 py-4">
-        <div>
-          <p className="text-xs text-muted-foreground">Share code</p>
+    <Section title="Share code">
+      <Card className="py-0">
+        <CardContent className="flex items-center justify-between gap-3 py-4">
           <p className="font-mono text-lg font-semibold tracking-widest">{groupCode}</p>
-        </div>
-        <Button variant="secondary" size="sm" onClick={copy}>
-          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-          {copied ? 'Copied' : 'Copy'}
-        </Button>
-      </CardContent>
-    </Card>
+          <Button variant="secondary" size="sm" onClick={copy}>
+            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+            {copied ? 'Copied' : 'Copy'}
+          </Button>
+        </CardContent>
+      </Card>
+    </Section>
   )
 }
 
@@ -152,37 +172,45 @@ function NotificationsButton({ userId, deviceLabel }: { userId: number; deviceLa
 function SliceCard({
   me,
   totalPages,
-  pagesPerPeriod,
+  planReadCount,
   onChanged,
 }: {
   me: StatusMember
   totalPages: number | null
-  pagesPerPeriod: number
+  planReadCount: number
   onChanged: () => void
 }) {
   const [from, setFrom] = useState(me.assigned_from?.toString() ?? '')
+  const [read, setRead] = useState(me.pages_per_period?.toString() ?? '')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const locked = me.read_days > 0
 
-  // Live preview of the slice's first-period end as the user types a start page.
-  // Mirrors the backend: end = min(start + pagesPerPeriod - 1, totalPages). Not stored.
+  // Live preview of the slice's first-period end as the reader types.
+  // Mirrors the backend: end = min(start + pagesToRead - 1, totalPages). Not stored.
+  // Pages-to-read falls back to the plan's default until the reader sets their own.
   const startNum = from ? Number(from) : null
+  const readNum = read ? Number(read) : planReadCount
   const previewEnd =
-    startNum != null && pagesPerPeriod > 0
-      ? Math.min(startNum + pagesPerPeriod - 1, totalPages ?? Number.MAX_SAFE_INTEGER)
+    startNum != null && readNum > 0
+      ? Math.min(startNum + readNum - 1, totalPages ?? Number.MAX_SAFE_INTEGER)
       : (me.assigned_to ?? null)
 
   async function save() {
     const f = from ? Number(from) : undefined
+    const r = read ? Number(read) : undefined
     if (totalPages != null && f && f > totalPages) {
       setMsg(`Start must be within the book (1–${totalPages}).`)
+      return
+    }
+    if (r != null && r < 1) {
+      setMsg('Pages to read must be at least 1.')
       return
     }
     setBusy(true)
     setMsg(null)
     try {
-      await assignSlice(me.membership_id, { assigned_from: f })
+      await assignSlice(me.membership_id, { assigned_from: f, pages_per_period: r })
       setMsg('Saved.')
       onChanged()
     } catch (e) {
@@ -193,21 +221,23 @@ function SliceCard({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Initial page slice</CardTitle>
-        <CardDescription>
-          {locked
-            ? "Locked — you've started reading, so your starting point is fixed."
-            : `Set where you start${totalPages ? ` (1–${totalPages})` : ''}. The end is set automatically by the plan's schedule.`}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {locked ? (
-          <div className="grid grid-cols-2 gap-3 text-sm">
+    <Section title="Initial page slice">
+      <Card>
+        <CardContent className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            {locked
+              ? "Locked — you've started reading, so your slice is fixed."
+              : `Set where you start${totalPages ? ` (1–${totalPages})` : ''} and how many pages you read each period. The end is worked out for you.`}
+          </p>
+          {locked ? (
+          <div className="grid grid-cols-3 gap-3 text-sm">
             <div>
               <p className="text-xs text-muted-foreground">Start page</p>
               <p className="font-medium">{me.assigned_from ?? '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Pages / period</p>
+              <p className="font-medium">{me.pages_per_period ?? planReadCount}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Ends at</p>
@@ -225,12 +255,20 @@ function SliceCard({
                   onChange={(e) => setFrom(e.target.value.replace(/\D/g, ''))}
                 />
               </Labeled>
-              <Labeled label="Ends at (auto)">
-                <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
-                  {previewEnd ?? '—'}
-                </div>
+              <Labeled label="Pages to read">
+                <Input
+                  inputMode="numeric"
+                  placeholder={String(planReadCount)}
+                  value={read}
+                  onChange={(e) => setRead(e.target.value.replace(/\D/g, ''))}
+                />
               </Labeled>
             </div>
+            <Labeled label="Ends at (auto)">
+              <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
+                {previewEnd ?? '—'}
+              </div>
+            </Labeled>
             <Button onClick={save} disabled={busy} className="w-full">
               {busy ? 'Saving…' : 'Save slice'}
             </Button>
@@ -243,10 +281,11 @@ function SliceCard({
                 {msg}
               </p>
             )}
-          </>
-        )}
-      </CardContent>
-    </Card>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </Section>
   )
 }
 

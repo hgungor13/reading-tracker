@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import { Section } from '@/components/Section'
 import { cn } from '@/lib/utils'
 import { getLogs, getPlanReads, toggleReadDay, type PlanReads } from '@/lib/api'
 import { formatTR, TR_MONTHS, TR_WEEKDAYS } from '@/lib/date'
@@ -18,6 +19,7 @@ export function CalendarCard({
   today,
   planStart,
   planEnd,
+  hasSlice,
   refresh,
   onChanged,
   footer,
@@ -27,11 +29,16 @@ export function CalendarCard({
   today: string
   planStart: string
   planEnd: string | null
+  hasSlice: boolean
   refresh?: number
   onChanged: () => void
   footer?: ReactNode
 }) {
-  const [mode, setMode] = useState<Mode>('mine')
+  const [mode, setMode] = useState<Mode>(hasSlice ? 'mine' : 'everyone')
+  // Without a saved slice the reader has no personal schedule to track, so the
+  // "Me" calendar (and its "I read today" button) is unavailable — only the
+  // group view makes sense.
+  const activeMode: Mode = hasSlice ? mode : 'everyone'
   const [cursor, setCursor] = useState(() => {
     const [y, m] = today.split('-').map(Number)
     return { y, m: m - 1 }
@@ -52,8 +59,8 @@ export function CalendarCard({
     void loadMine()
   }, [loadMine, refresh])
   useEffect(() => {
-    if (mode === 'everyone') void loadGroup()
-  }, [mode, loadGroup, refresh])
+    if (activeMode === 'everyone') void loadGroup()
+  }, [activeMode, loadGroup, refresh])
 
   const byDate = useMemo(() => {
     const map = new Map<string, Set<number>>()
@@ -95,7 +102,7 @@ export function CalendarCard({
   const [ey, em] = (planEnd ?? today).split('-').map(Number)
   const endYm = ey * 12 + (em - 1)
   const canPrev = ym > startYm
-  const canNext = ym < (mode === 'everyone' ? endYm : todayYm)
+  const canNext = ym < (activeMode === 'everyone' ? endYm : todayYm)
 
   function shift(delta: number) {
     setCursor((c) => {
@@ -110,10 +117,10 @@ export function CalendarCard({
   const readToday = logs.has(today)
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-base">Reading calendar</CardTitle>
+    <Section
+      title="Reading calendar"
+      action={
+        hasSlice ? (
           <select
             value={mode}
             onChange={(e) => setMode(e.target.value as Mode)}
@@ -122,15 +129,17 @@ export function CalendarCard({
             <option value="mine">Me</option>
             <option value="everyone">Everyone</option>
           </select>
-        </div>
-        <CardDescription>
-          {mode === 'mine'
-            ? 'Tap a day to mark it read. Green = read.'
-            : 'Tap a day to see who read. Greener = more readers.'}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+        ) : undefined
+      }
+    >
+      <Card>
+        <CardContent className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            {activeMode === 'mine'
+              ? 'Tap a day to mark it read. Green = read.'
+              : 'Tap a day to see who read. Greener = more readers.'}
+          </p>
+          <div className="flex items-center justify-between">
           <Button variant="ghost" size="icon" onClick={() => shift(-1)} disabled={!canPrev}>
             <ChevronLeft className="size-5" />
           </Button>
@@ -155,7 +164,7 @@ export function CalendarCard({
             const inWindow = date >= planStart && (!planEnd || date <= planEnd)
             const isToday = date === today
 
-            if (mode === 'mine') {
+            if (activeMode === 'mine') {
               const enabled = inWindow && date <= today
               const read = logs.has(date)
               return (
@@ -202,7 +211,7 @@ export function CalendarCard({
           })}
         </div>
 
-        {mode === 'mine' && readTodayInWindow && (
+        {activeMode === 'mine' && readTodayInWindow && (
           <Button
             variant={readToday ? 'secondary' : 'default'}
             className="w-full"
@@ -219,7 +228,7 @@ export function CalendarCard({
           </Button>
         )}
 
-        {mode === 'everyone' && group && (
+        {activeMode === 'everyone' && group && (
           <div className="rounded-lg border">
             <div className="border-b px-3 py-2 text-sm font-medium">
               {formatTR(selected)} — {selectedReaders.size} of {total} read
@@ -247,8 +256,9 @@ export function CalendarCard({
           </div>
         )}
 
-        {footer}
-      </CardContent>
-    </Card>
+          {footer}
+        </CardContent>
+      </Card>
+    </Section>
   )
 }
