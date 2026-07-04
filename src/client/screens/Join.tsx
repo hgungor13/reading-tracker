@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Layout } from '@/components/Layout'
 import { joinPlan } from '@/lib/api'
-import { setSession, type Session } from '@/lib/session'
+import { getIdentity, setSession, type Session } from '@/lib/session'
 
 export function Join({
   prefillCode = '',
@@ -16,7 +16,7 @@ export function Join({
   onJoined: (s: Session) => void
   onBack: () => void
 }) {
-  const [name, setName] = useState('')
+  const [name, setName] = useState(() => getIdentity()?.userName ?? '')
   const [code, setCode] = useState(prefillCode)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)

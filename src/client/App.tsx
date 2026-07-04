@@ -3,7 +3,7 @@ import { Home } from '@/screens/Home'
 import { CreatePlan } from '@/screens/CreatePlan'
 import { Join } from '@/screens/Join'
 import { Dashboard } from '@/screens/Dashboard'
-import { clearSession, getSession, type Session } from '@/lib/session'
+import { clearSession, getSession, setSession as persistSession, type Session } from '@/lib/session'
 
 type Screen = 'home' | 'create' | 'join'
 
@@ -12,12 +12,19 @@ export function App() {
   const [screen, setScreen] = useState<Screen>('home')
   const [prefillCode, setPrefillCode] = useState('')
 
-  // Logged in (joined a plan) → straight to the dashboard.
+  // Open one of the reader's already-joined plans (from the home list).
+  function openPlan(s: Session) {
+    persistSession(s)
+    setSession(s)
+  }
+
+  // A plan is open → straight to the dashboard.
   if (session) {
     return (
       <Dashboard
         session={session}
         onLeave={() => {
+          // Close the plan but keep the identity so home still lists it.
           clearSession()
           setSession(null)
           setScreen('home')
@@ -51,5 +58,11 @@ export function App() {
     )
   }
 
-  return <Home onCreate={() => setScreen('create')} onJoin={() => setScreen('join')} />
+  return (
+    <Home
+      onCreate={() => setScreen('create')}
+      onJoin={() => setScreen('join')}
+      onOpenPlan={openPlan}
+    />
+  )
 }

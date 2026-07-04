@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { BellRing, Check, Copy, LogOut, Settings, Smartphone } from 'lucide-react'
+import { BellRing, Check, Copy, LayoutGrid, Settings, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
@@ -54,8 +54,8 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
               <Settings className={`size-5 ${settingsOpen ? 'text-primary' : ''}`} />
             </Button>
           )}
-          <Button variant="ghost" size="icon" onClick={onLeave} aria-label="Leave group">
-            <LogOut className="size-5" />
+          <Button variant="ghost" size="icon" onClick={onLeave} aria-label="My plans">
+            <LayoutGrid className="size-5" />
           </Button>
         </div>
       }

@@ -173,6 +173,25 @@ app.post('/api/join', async (c) => {
   return c.json({ membership, user, plan })
 })
 
+// List every plan this user has joined — powers the "Your plans" home list so
+// readers don't have to keep the group codes around.
+app.get('/api/users/:id/memberships', async (c) => {
+  const id = Number(c.req.param('id'))
+  const { results } = await c.env.DB.prepare(
+    `SELECT m.id AS membership_id, u.id AS user_id, u.name AS user_name,
+            p.group_code, p.name AS plan_name, b.title AS book_title
+     FROM memberships m
+     JOIN users u ON u.id = m.user_id
+     JOIN reading_plans p ON p.id = m.plan_id AND p.active = 1
+     JOIN books b ON b.id = p.book_id
+     WHERE m.user_id = ?1
+     ORDER BY m.id DESC`,
+  )
+    .bind(id)
+    .all()
+  return c.json({ memberships: results })
+})
+
 // Set (or update) a member's assigned slice + pace.
 app.post('/api/memberships/:id/assign', async (c) => {
   const id = Number(c.req.param('id'))

@@ -67,6 +67,22 @@ export async function getPlanReads(groupCode: string): Promise<PlanReads> {
   return { members: data.members ?? [], reads: data.reads ?? [] }
 }
 
+export type JoinedPlan = {
+  membership_id: number
+  user_id: number
+  user_name: string
+  group_code: string
+  plan_name: string
+  book_title: string
+}
+
+export async function getUserMemberships(userId: number): Promise<JoinedPlan[]> {
+  const res = await fetch(`/api/users/${userId}/memberships`)
+  const data = (await res.json().catch(() => ({}))) as { memberships?: JoinedPlan[]; error?: string }
+  if (!res.ok) throw new Error(data.error || 'Could not load your plans')
+  return data.memberships ?? []
+}
+
 async function post<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
