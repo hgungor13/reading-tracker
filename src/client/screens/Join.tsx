@@ -74,7 +74,7 @@ export function Join({
         <CardContent className="flex flex-col gap-4">
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Your name</span>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Hüseyin" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />
           </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Group code</span>
