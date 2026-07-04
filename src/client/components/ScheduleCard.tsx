@@ -15,10 +15,13 @@ import {
   type Plan,
 } from '@/lib/api'
 
-function currentSeq(periods: Period[], today: string): number | null {
+// The current period is the next one still unread — matching count-based
+// completion — so it stays consistent for readers who are ahead or behind the
+// plan's calendar. If everything is done, it's the last period.
+function currentSeq(periods: Period[]): number | null {
   if (!periods.length) return null
-  const past = periods.filter((p) => p.due_date <= today)
-  return (past.length ? past[past.length - 1] : periods[0]).seq
+  const pending = periods.find((p) => !p.done_date)
+  return (pending ?? periods[periods.length - 1]).seq
 }
 
 function everyLabel(unit: PeriodUnit, every: number): string {
@@ -31,14 +34,12 @@ function everyLabel(unit: PeriodUnit, every: number): string {
 export function MyScheduleCard({
   plan,
   membershipId,
-  today,
   refresh,
   hasSlice,
   pagesPerPeriod,
 }: {
   plan: Plan
   membershipId: number
-  today: string
   refresh?: number
   hasSlice: boolean
   pagesPerPeriod: number
@@ -53,7 +54,7 @@ export function MyScheduleCard({
   }, [loadPeriods, plan.end_date, plan.page_step, plan.pages_per_period, plan.period_unit, refresh])
 
   const hasSchedule = (!!plan.end_date || plan.total_pages != null) && !!periods?.length
-  const curSeq = periods ? currentSeq(periods, today) : null
+  const curSeq = periods ? currentSeq(periods) : null
   const current = periods?.find((p) => p.seq === curSeq) ?? null
   const title = hasSlice ? 'My schedule' : 'Example schedule'
   const subtitle = !hasSchedule
@@ -104,7 +105,7 @@ export function MyScheduleCard({
               >
                 <span className="w-5 shrink-0 text-xs text-muted-foreground">{p.seq}</span>
                 <span className="w-24 shrink-0 text-xs text-muted-foreground">
-                  {formatTR(p.due_date)}
+                  {formatTR(p.done_date ?? p.due_date)}
                 </span>
                 <span className="flex-1 font-medium">
                   {p.from_page}–{p.to_page}

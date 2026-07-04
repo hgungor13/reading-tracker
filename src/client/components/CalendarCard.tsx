@@ -39,8 +39,10 @@ export function CalendarCard({
   // "Me" calendar (and its "I read today" button) is unavailable — only the
   // group view makes sense.
   const activeMode: Mode = hasSlice ? mode : 'everyone'
+  // Open on the plan's start month, not today, so the beginning of the plan is
+  // where the reader lands.
   const [cursor, setCursor] = useState(() => {
-    const [y, m] = today.split('-').map(Number)
+    const [y, m] = planStart.split('-').map(Number)
     return { y, m: m - 1 }
   })
   const [busy, setBusy] = useState(false)

@@ -96,7 +96,6 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
             <MyScheduleCard
               plan={status.plan}
               membershipId={session.membershipId}
-              today={status.date}
               refresh={version}
               hasSlice={me.assigned_from != null}
               pagesPerPeriod={me.pages_per_period ?? status.plan.pages_per_period}
