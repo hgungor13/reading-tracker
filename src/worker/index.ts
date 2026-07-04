@@ -323,9 +323,10 @@ function daysBetween(a: string, b: string): number {
 }
 
 // The core generator: constant read count, start page strides by pageStep.
+// Terminates on the end date OR the last page — at least one must be set.
 function generatePeriods(opts: {
   startDate: string
-  endDate: string
+  endDate: string | null
   startPage: number
   pagesPerPeriod: number
   pageStep: number
@@ -335,9 +336,11 @@ function generatePeriods(opts: {
 }): PeriodRow[] {
   const step = opts.pageStep > 0 ? opts.pageStep : opts.pagesPerPeriod
   const rows: PeriodRow[] = []
+  // Without any stopping condition we'd loop to the safety cap — refuse instead.
+  if (!opts.endDate && opts.maxPage == null) return rows
   for (let i = 0; i < 5000; i++) {
     const due = addInterval(opts.startDate, opts.unit, opts.every, i)
-    if (due > opts.endDate) break
+    if (opts.endDate && due > opts.endDate) break
     const from = opts.startPage + i * step
     // Don't schedule past the last page of the book (plan threshold).
     if (opts.maxPage != null && from > opts.maxPage) break
@@ -386,7 +389,8 @@ async function regenerateForMember(
   plan: PlanRow,
   member: { id: number; assigned_from: number | null; pages_per_period?: number | null },
 ): Promise<number> {
-  if (!plan.end_date) return 0
+  // A schedule needs a terminator: an end date or a known page count.
+  if (!plan.end_date && plan.total_pages == null) return 0
   const rows = generatePeriods({
     startDate: plan.start_date,
     endDate: plan.end_date,
@@ -460,7 +464,7 @@ app.post('/api/plans/:code/schedule', async (c) => {
     start_date?: string
     // Schedule cadence. Start page AND pages-to-read are NOT here — they belong
     // to each reader's slice. page_step (the jump) stays shared.
-    end_date: string
+    end_date?: string
     pages_per_period?: number
     page_step?: number
     period_unit: PeriodUnit
@@ -468,14 +472,19 @@ app.post('/api/plans/:code/schedule', async (c) => {
     reader_count?: number
   }>()
 
-  if (!b.end_date || !b.period_unit) {
-    return c.json({ error: 'end_date and period_unit are required' }, 400)
+  if (!b.period_unit) {
+    return c.json({ error: 'period_unit is required' }, 400)
   }
   if (!['day', 'week', 'month'].includes(b.period_unit)) {
     return c.json({ error: 'period_unit must be day, week or month' }, 400)
   }
+  // The schedule must be able to finish: need an end date OR a total page count.
+  const totalPagesResolved = b.total_pages ?? plan.total_pages
+  if (!b.end_date && totalPagesResolved == null) {
+    return c.json({ error: 'Set a total page count or an end date so the schedule can finish' }, 400)
+  }
   const startDate = b.start_date || plan.start_date
-  if (b.end_date < startDate) {
+  if (b.end_date && b.end_date < startDate) {
     return c.json({ error: 'End date must be on or after the start date' }, 400)
   }
 
@@ -503,7 +512,7 @@ app.post('/api/plans/:code/schedule', async (c) => {
       plan.id,
       b.name?.trim() || null,
       startDate,
-      b.end_date,
+      b.end_date ?? null,
       b.pages_per_period ?? null,
       b.page_step ?? 0,
       b.period_unit,
@@ -543,12 +552,17 @@ app.get('/api/memberships/:id/periods', async (c) => {
 app.post('/api/plans/:code/clone', async (c) => {
   const plan = await planByCode(c.env, c.req.param('code'))
   if (!plan) return c.json({ error: 'Plan not found' }, 404)
-  if (!plan.end_date) return c.json({ error: 'Set a schedule before cloning' }, 400)
+  if (!plan.end_date && plan.total_pages == null) {
+    return c.json({ error: 'Set a schedule before cloning' }, 400)
+  }
 
   const b = await c.req.json<{ start_date?: string; end_date?: string; name?: string }>()
-  const duration = daysBetween(plan.start_date, plan.end_date)
-  const newStart = b.start_date ?? addInterval(plan.end_date, 'day', 1, 1)
-  const newEnd = b.end_date ?? addInterval(newStart, 'day', 1, duration)
+  // Date-windowed plans shift by their duration; page-capped plans (no end date)
+  // just continue from where each reader left off, staying open-ended.
+  const newStart = b.start_date ?? (plan.end_date ? addInterval(plan.end_date, 'day', 1, 1) : plan.start_date)
+  const newEnd =
+    b.end_date ??
+    (plan.end_date ? addInterval(newStart, 'day', 1, daysBetween(plan.start_date, plan.end_date)) : null)
 
   // New plan (same book), fresh code, same cadence.
   let created: { id: number; group_code: string } | null = null

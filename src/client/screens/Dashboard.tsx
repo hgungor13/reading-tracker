@@ -31,10 +31,11 @@ export function Dashboard({ session, onLeave }: { session: Session; onLeave: () 
   }, [load])
 
   const me = status?.members.find((m) => m.membership_id === session.membershipId)
-  const hasSchedule = !!status?.plan.end_date
+  // A schedule is set up once it has a terminator: an end date OR a page count.
+  const hasSchedule = !!status && (!!status.plan.end_date || status.plan.total_pages != null)
   // Plan settings stays tucked behind the gear so the focus is slice + schedule.
   // It opens automatically while there's no schedule yet (setup is required).
-  const notSetUp = !!status && !status.plan.end_date
+  const notSetUp = !!status && !hasSchedule
   const settingsOpen = showSettings || notSetUp
 
   return (

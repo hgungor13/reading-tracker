@@ -129,7 +129,7 @@ export function setSchedule(
     total_pages?: number
     name?: string
     start_date?: string
-    end_date: string
+    end_date?: string
     pages_per_period?: number
     page_step?: number
     period_unit: PeriodUnit

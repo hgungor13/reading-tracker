@@ -52,7 +52,7 @@ export function MyScheduleCard({
     void loadPeriods()
   }, [loadPeriods, plan.end_date, plan.page_step, plan.pages_per_period, plan.period_unit, refresh])
 
-  const hasSchedule = !!plan.end_date && !!periods?.length
+  const hasSchedule = (!!plan.end_date || plan.total_pages != null) && !!periods?.length
   const curSeq = periods ? currentSeq(periods, today) : null
   const current = periods?.find((p) => p.seq === curSeq) ?? null
   const title = hasSlice ? 'My schedule' : 'Example schedule'
@@ -123,7 +123,7 @@ export function MyScheduleCard({
 
 export function PlanSettingsCard({ plan, onChanged }: { plan: Plan; onChanged: () => void }) {
   const [editing, setEditing] = useState(false)
-  const notSetUp = !plan.end_date
+  const notSetUp = !plan.end_date && plan.total_pages == null
 
   return (
     <Section
@@ -217,8 +217,10 @@ function ScheduleForm({
   async function save() {
     if (!title.trim()) return setError('Please enter the book title.')
     if (!startDate) return setError('Please choose a start date.')
-    if (!endDate) return setError('Please choose an end date.')
-    if (endDate < startDate) return setError('End date must be on or after the start date.')
+    if (!totalPages && !endDate)
+      return setError('Enter total pages or an end date so the schedule can finish.')
+    if (endDate && endDate < startDate)
+      return setError('End date must be on or after the start date.')
     setBusy(true)
     setError(null)
     try {
@@ -226,7 +228,7 @@ function ScheduleForm({
         title: title.trim(),
         total_pages: totalPages ? Number(totalPages) : undefined,
         start_date: startDate,
-        end_date: endDate,
+        end_date: endDate || undefined,
         page_step: pageStep ? Number(pageStep) : undefined,
         period_unit: unit,
         period_every: every ? Number(every) : 1,
@@ -297,7 +299,7 @@ function ScheduleForm({
         <Labeled label="Start date">
           <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
         </Labeled>
-        <Labeled label="End date (goal)">
+        <Labeled label="End date (optional)">
           <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </Labeled>
       </div>
@@ -316,7 +318,8 @@ function ScheduleForm({
       </div>
       <p className="text-xs text-muted-foreground">
         Each reader sets their own start page and pages-to-read in their slice. The start-page
-        jump is shared by everyone; blank = read contiguous pages.
+        jump is shared by everyone; blank = read contiguous pages. With total pages set, the
+        schedule finishes at the last page — an end date is optional.
       </p>
     </div>
   )
