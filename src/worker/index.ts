@@ -173,6 +173,27 @@ app.post('/api/join', async (c) => {
   return c.json({ membership, user, plan })
 })
 
+// The members already in a plan — so the join screen can offer a "who are you?"
+// dropdown instead of a free-text name (which spawns duplicate readers on typos).
+app.get('/api/plans/:code/members', async (c) => {
+  const code = c.req.param('code').toUpperCase()
+  const plan = await c.env.DB.prepare(
+    `SELECT id, name FROM reading_plans WHERE group_code = ?1 AND active = 1`,
+  )
+    .bind(code)
+    .first<{ id: number; name: string }>()
+  if (!plan) return c.json({ error: 'No active plan with that code' }, 404)
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT u.name FROM memberships m
+     JOIN users u ON u.id = m.user_id
+     WHERE m.plan_id = ?1 ORDER BY u.name COLLATE NOCASE`,
+  )
+    .bind(plan.id)
+    .all<{ name: string }>()
+  return c.json({ plan_name: plan.name, members: results })
+})
+
 // List every plan this user has joined — powers the "Your plans" home list so
 // readers don't have to keep the group codes around.
 app.get('/api/users/:id/memberships', async (c) => {

@@ -67,6 +67,17 @@ export async function getPlanReads(groupCode: string): Promise<PlanReads> {
   return { members: data.members ?? [], reads: data.reads ?? [] }
 }
 
+export type PlanMembers = { plan_name: string; members: { name: string }[] }
+
+// Existing members of a plan (for the join "who are you?" picker). Returns null
+// if the code doesn't match a plan yet.
+export async function getPlanMembers(code: string): Promise<PlanMembers | null> {
+  const res = await fetch(`/api/plans/${encodeURIComponent(code)}/members`)
+  if (!res.ok) return null
+  const data = (await res.json().catch(() => ({}))) as Partial<PlanMembers>
+  return { plan_name: data.plan_name ?? '', members: data.members ?? [] }
+}
+
 export type JoinedPlan = {
   membership_id: number
   user_id: number

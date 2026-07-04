@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Layout } from '@/components/Layout'
-import { joinPlan } from '@/lib/api'
+import { getPlanMembers, joinPlan } from '@/lib/api'
 import { getIdentity, setSession, type Session } from '@/lib/session'
+
+const NEW_READER = '__new__'
 
 export function Join({
   prefillCode = '',
@@ -16,20 +18,44 @@ export function Join({
   onJoined: (s: Session) => void
   onBack: () => void
 }) {
-  const [name, setName] = useState(() => getIdentity()?.userName ?? '')
   const [code, setCode] = useState(prefillCode)
+  const [members, setMembers] = useState<{ name: string }[] | null>(null)
+  const [picked, setPicked] = useState('')
+  const [name, setName] = useState(() => getIdentity()?.userName ?? '')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function submit() {
-    if (!name.trim() || !code.trim()) {
-      setError('Enter both your name and the group code.')
+  // Once a full code is entered, load the plan's members so the reader can pick
+  // their name instead of retyping it (which would create a duplicate reader).
+  useEffect(() => {
+    const c = code.trim().toUpperCase()
+    if (c.length !== 6) {
+      setMembers(null)
       return
     }
+    let cancelled = false
+    void getPlanMembers(c).then((res) => {
+      if (cancelled) return
+      setMembers(res?.members ?? null)
+      const mine = getIdentity()?.userName
+      setPicked(res?.members?.some((m) => m.name === mine) ? mine! : '')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [code])
+
+  const hasMembers = !!members && members.length > 0
+  const typing = !hasMembers || picked === NEW_READER
+  const resolvedName = (typing ? name : picked).trim()
+
+  async function submit() {
+    if (code.trim().length !== 6) return setError('Enter the 6-character group code.')
+    if (!resolvedName) return setError(hasMembers ? 'Pick your name or add a new one.' : 'Enter your name.')
     setBusy(true)
     setError(null)
     try {
-      const { membership, user, plan } = await joinPlan(code.trim().toUpperCase(), name.trim())
+      const { membership, user, plan } = await joinPlan(code.trim().toUpperCase(), resolvedName)
       const session: Session = {
         membershipId: membership.id,
         userId: user.id,
@@ -69,13 +95,11 @@ export function Join({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Your details</CardTitle>
-          <CardDescription>No password — just your name and the group code.</CardDescription>
+          <CardDescription>
+            No password — enter the group code, then pick or add your name.
+          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Your name</span>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />
-          </label>
           <label className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Group code</span>
             <Input
@@ -86,6 +110,48 @@ export function Join({
               className="font-mono tracking-widest"
             />
           </label>
+
+          {hasMembers ? (
+            <div className="flex flex-col gap-4">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">Who are you?</span>
+                <select
+                  value={picked}
+                  onChange={(e) => setPicked(e.target.value)}
+                  className="h-9 rounded-md border bg-background px-3 text-sm"
+                >
+                  <option value="" disabled>
+                    Select your name…
+                  </option>
+                  {members!.map((m) => (
+                    <option key={m.name} value={m.name}>
+                      {m.name}
+                    </option>
+                  ))}
+                  <option value={NEW_READER}>＋ I'm new here</option>
+                </select>
+                <span className="text-xs text-muted-foreground">
+                  Pick your existing name so you don't create a duplicate reader.
+                </span>
+              </label>
+              {picked === NEW_READER && (
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium">Your name</span>
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Your name"
+                    autoFocus
+                  />
+                </label>
+              )}
+            </div>
+          ) : (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Your name</span>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />
+            </label>
+          )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
